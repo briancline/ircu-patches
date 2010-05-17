@@ -583,7 +583,7 @@ diff -Npru ircu2.10.12.13-rc2/ircd/s_auth.c ircu2.10.12.13-rc2-fakehost/ircd/s_a
     * for responses) is not confused with the client's password.
 diff -Npru ircu2.10.12.13-rc2/ircd/s_user.c ircu2.10.12.13-rc2-fakehost/ircd/s_user.c
 --- ircu2.10.12.13-rc2/ircd/s_user.c	2009-07-30 21:04:15.000000000 -0500
-+++ ircu2.10.12.13-rc2-fakehost/ircd/s_user.c	2010-05-16 20:22:30.000000000 -0500
++++ ircu2.10.12.13-rc2-fakehost/ircd/s_user.c	2010-05-16 21:47:59.000000000 -0500
 @@ -340,10 +340,12 @@ int hunt_server_prio_cmd(struct Client *
   */
  int register_user(struct Client *cptr, struct Client *sptr)
@@ -727,7 +727,7 @@ diff -Npru ircu2.10.12.13-rc2/ircd/s_user.c ircu2.10.12.13-rc2-fakehost/ircd/s_u
          *m++ = userModeList[i].c;
      }
      *m = '\0';
-@@ -1074,9 +1095,12 @@ int set_user_mode(struct Client *cptr, s
+@@ -1074,16 +1095,27 @@ int set_user_mode(struct Client *cptr, s
            ClearDebug(sptr);
          break;
        case 'x':
@@ -737,26 +737,34 @@ diff -Npru ircu2.10.12.13-rc2/ircd/s_user.c ircu2.10.12.13-rc2-fakehost/ircd/s_u
 +        if (what == MODE_ADD) {
 +          SetHiddenHost(sptr);
 +          if (!FlagHas(&setflags, FLAG_HIDDENHOST))
-+      	    do_host_hiding = 1;
++            do_host_hiding = 1;
 +        }
 +        break;
        case 'r':
- 	if (*(p + 1) && (what == MODE_ADD)) {
- 	  account = *(++p);
-@@ -1084,6 +1108,12 @@ int set_user_mode(struct Client *cptr, s
- 	}
- 	/* There is no -r */
- 	break;
-+	    case 'f':
-+	      if (*(p + 1) && (what == MODE_ADD)) {
+-	if (*(p + 1) && (what == MODE_ADD)) {
+-	  account = *(++p);
+-	  SetAccount(sptr);
+-	}
+-	/* There is no -r */
+-	break;
++        if (*(p + 1) && (what == MODE_ADD)) {
++          account = *(++p);
++          SetAccount(sptr);
++        }
++        /* There is no -r */
++        break;
++      case 'f':
++        if (*(p + 1) && (what == MODE_ADD)) {
 +          fakehost = *(++p);
++          ircd_strncpy(cli_user(sptr)->fakehost, fakehost, HOSTLEN);
 +          SetFakeHost(sptr);
-+	      }
++        }
++        /* There is no -f */
 +        break;
        default:
          send_reply(sptr, ERR_UMODEUNKNOWNFLAG, *m);
          break;
-@@ -1157,7 +1187,7 @@ int set_user_mode(struct Client *cptr, s
+@@ -1157,7 +1189,7 @@ int set_user_mode(struct Client *cptr, s
        ircd_strncpy(cli_user(sptr)->account, account, len);
    }
    if (!FlagHas(&setflags, FLAG_HIDDENHOST) && do_host_hiding && allow_modes != ALLOWMODES_DEFAULT)
@@ -765,7 +773,7 @@ diff -Npru ircu2.10.12.13-rc2/ircd/s_user.c ircu2.10.12.13-rc2-fakehost/ircd/s_u
  
    if (IsRegistered(sptr)) {
      if (!FlagHas(&setflags, FLAG_OPER) && IsOper(sptr)) {
-@@ -1218,6 +1248,7 @@ char *umode_str(struct Client *cptr)
+@@ -1218,6 +1250,7 @@ char *umode_str(struct Client *cptr)
      *m++ = ' ';
      while ((*m++ = *t++))
        ; /* Empty loop */
@@ -773,7 +781,7 @@ diff -Npru ircu2.10.12.13-rc2/ircd/s_user.c ircu2.10.12.13-rc2-fakehost/ircd/s_u
  
      if (cli_user(cptr)->acc_create) {
        char nbuf[20];
-@@ -1226,12 +1257,21 @@ char *umode_str(struct Client *cptr)
+@@ -1226,12 +1259,21 @@ char *umode_str(struct Client *cptr)
  	     cli_user(cptr)->acc_create));
        ircd_snprintf(0, t = nbuf, sizeof(nbuf), ":%Tu",
  		    cli_user(cptr)->acc_create);
@@ -797,7 +805,7 @@ diff -Npru ircu2.10.12.13-rc2/ircd/s_user.c ircu2.10.12.13-rc2-fakehost/ircd/s_u
    *m = '\0';
  
    return umodeBuf;                /* Note: static buffer, gets
-@@ -1266,6 +1306,8 @@ void send_umode(struct Client *cptr, str
+@@ -1266,6 +1308,8 @@ void send_umode(struct Client *cptr, str
      if (FlagHas(old, flag)
          == HasFlag(sptr, flag))
        continue;
