@@ -1,0 +1,3448 @@
+diff -Nurp ircu2.10.12.13-rc2/doc/example.conf ircu2.10.12.13-rc2-fakehost-mute/doc/example.conf
+--- ircu2.10.12.13-rc2/doc/example.conf	2007-11-04 21:01:34.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/doc/example.conf	2010-05-25 12:19:56.000000000 -0500
+@@ -215,27 +215,31 @@ Class {
+  # set (can use /SET)
+  # local_gline (can set a G-line for this server only)
+  # local_badchan (can set a Gchan for this server only)
++ # local_mute (can set a mute for this server only)
+  # see_chan (can see users in +s channels in /WHO)
+  # list_chan (can see +s channels with /LIST S, or modes with /LIST M)
+  # wide_gline (can use ! to force a wide G-line)
++ # wide_mute (can use ! to force a wide mute)
+  # see_opers (can see opers without DISPLAY privilege)
+  # local_opmode (can use OPMODE/CLEARMODE on local channels)
+  # force_local_opmode (can use OPMODE/CLEARMODE on quarantined local channels)
+  # kill (can kill clients on other servers)
+  # gline (can issue G-lines to other servers)
++ # mute (can issue mutes to other servers)
+  # jupe_server (not used)
+  # opmode (can use /OPMODE)
+  # badchan (can issue Gchans to other servers)
+  # force_opmode (can use OPMODE/CLEARMODE on quarantined global channels)
+  # apass_opmode (can use OPMODE/CLEARMODE on +A and +U keys)
++ # set_fakehost (can set own fakehost with /fake)
+  #
+  # For global opers (with propagate = yes or local = no), the default
+  # is to grant all of the above privileges EXCEPT walk_lchan,
+- # unlimit_query, set, badchan, local_badchan and apass_opmode.
++ # unlimit_query, set, badchan, local_badchan, apass_opmode, and set_fakehost.
+  # For local opers, the default is to grant ONLY the following
+  # privileges:
+  #  chan_limit, mode_lchan, show_invis, show_all_invis, local_kill,
+- #  rehash, local_gline, local_jupe, local_opmode, whox, display,
++ #  rehash, local_gline, local_mute, local_jupe, local_opmode, whox, display,
+  #  force_local_opmode
+  # Any privileges listed in a Class block override the defaults.
+ 
+@@ -840,6 +844,7 @@ features
+ # "CONNECTFREQUENCY" = "600";
+ # "DEFAULTMAXSENDQLENGTH" = "40000";
+ # "GLINEMAXUSERCOUNT" = "20";
++# "MUTEMAXUSERCOUNT" = "20";
+ # "MPATH" = "ircd.motd";
+ # "RPATH" = "remote.motd";
+ # "PPATH" = "ircd.pid";
+diff -Nurp ircu2.10.12.13-rc2/doc/readme.features ircu2.10.12.13-rc2-fakehost-mute/doc/readme.features
+--- ircu2.10.12.13-rc2/doc/readme.features	2007-02-25 08:32:41.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/doc/readme.features	2010-05-25 12:19:39.000000000 -0500
+@@ -382,6 +382,14 @@ G-lines that affect too many users have 
+ command, to prevent accidental G-lines of large blocks of users.  This
+ feature sets that particular threshold.
+ 
++MUTEMAXUSERCOUNT
++ * Type: integer
++ * Default: 20
++
++Mutes that affect too many users have to be set with a special
++command, to prevent accidental mutes of large blocks of users.  This
++feature sets that particular threshold.
++
+ MPATH
+  * Type: string
+  * Default: "ircd.motd"
+diff -Nurp ircu2.10.12.13-rc2/doc/readme.mute ircu2.10.12.13-rc2-fakehost-mute/doc/readme.mute
+--- ircu2.10.12.13-rc2/doc/readme.mute	1969-12-31 18:00:00.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/doc/readme.mute	2010-05-25 12:19:39.000000000 -0500
+@@ -0,0 +1,137 @@
++MUTE documentation, last updated on 25 May 2010
++
++Mutes provide a way of allowing operators to completely silence a
++user on the network, and work exactly like G-lines in the way they
++are set, manipulated, destroyed, bursted, and propagated. However,
++rather than being disconnected from the network, muted users remain
++on the network and cannot send any private messages or notices,
++cannot speak in or notice any channels, cannot set any topics,
++cannot change nicknames, their PART and QUIT messages, if
++provided, will not be displayed to anyone. Further, muted users
++do not receive any error messages upon attempting any of these
++actions and thus will likely never know they are muted. This approach
++to silencing users on a global scale, completely unannounced, is
++aimed at reducing the risk and annoyance of attempted retaliation
++against users and operators, and ban and/or G-line evasion.
++
++For an ordinary user, the syntax is:
++
++  MUTE [<mask>]
++
++If <mask> is given, and if a mute for that server exists, all the
++information about that mute is displayed.  If <mask> is not given,
++an error is returned.
++
++For an operator, the syntax is:
++
++  MUTE [[!][+|-|>|<]<mask> [<target>] [<expiration> [:<reason>]]]
++
++There are a total of 10 basic forms of the MUTE command.  If no
++arguments are given, all existing mutes will be listed; if only
++<mask> is given, the behavior is the same as for an ordinary user.
++The remaining forms allow mutes to be set, manipulated, or possibly
++destroyed.
++
++* Local mutes.
++
++Opers may set or remove mutes that only apply to a specific server.
++When the <target> parameter is not given, the specific server will be
++the local server; otherwise, it will be taken to be a remote server,
++and the mute operations will take place there, if the oper has the
++MUTE privilege.  When <mask> is preceded with the '+' character, the
++mute will be added, and <expiration> and <reason> are required; when
++<mask> is preceded with the '-' character, the mute will be removed,
++and <expiration> and <reason> are not required.  The '<' and '>'
++character prefixes are not valid for local mutes.
++
++* Local modifications to global mutes.
++
++Opers may locally activate or deactivate global mutes.  In this
++mode, <mask> is interpreted as referencing an existing mute, and
++will be preceded by either '<' (to locally deactivate the mute) or
++'>' (to locally activate the mute).  This local state overrides the
++global state of the mute, and persists until there is a global state
++change to the mute, or until the mute expires.  The <expiration>
++and <reason> arguments are not required, but <target> may be given if
++the oper desires to make the appropriate change on a remote
++server--note that the oper will need the MUTE privilege for this.
++
++* Global mutes.
++
++Opers may, if they have the MUTE privilege, set and manipulate global
++mutes on the network.  To create a new mute, the oper must prefix
++the <mask> with either '+' (for globally activated mutes) or '-'
++(for globally deactivated mutes).  Additionally, <target> must be
++given as "*", and the <expiration> and <reason> parameters are
++required.  If the mute already exists, it will be modified to match
++the new global status, <expiration>, and <reason>.
++
++When the mute already exists, an oper may activate or deactivate it
++simply by setting <target> to "*" and prefixing the <mask> with either
++"+" (to activate the mute) or "-" (to deactivate it).  If it is
++desired to simply modify the expiration time or reason, without
++changing the activation status, specify <mask> without any prefix, set
++<target> to "*", and provide the updated <expire> and optionally an
++updated <reason>.
++
++* Privilege notes.
++
++Note that, for all locally-restricted mute changes, such as locally
++activating a mute or creating a local mute, the oper must have the
++LOCAL_MUTE privilege.  For any other mute change, including
++locally-restricted changes on remote servers, the server's
++CONFIG_OPERCMDS privilege must be enabled and the oper must have the
++MUTE privilege.  There are also restrictions to prevent an oper from
++setting a mute that is too wide; in some cases, those restrictions
++may be overridden by prefixing the <mask> parameter with the "!"
++character, IF the operator has the WIDE_MUTE privilege.
++
++For a server, the syntax is:
++
++  <prefix> MT <target> [!][+|-|>|<]<mask> [<expiration>] [<lastmod>]
++	[<lifetime>] [:<reason>]
++
++There are a total of 8 basic forms of the MT command.  The primary
++innovation is the addition of the <lifetime> parameter, which
++specifies a lifetime for the mute record which may be longer than
++the expiration time.  <lifetime> will be monotonically increasing,
++enabling <expiration> to be modified in any way desirable.
++
++* Local mutes.
++
++Remote servers, or opers on them, may remotely set local mutes on
++the local server.  To create a local mute, <target> will be set to
++the numeric of the local server, and <mask> must be preceded by '+'
++(optionally preceded by '!' if the origin desires to override some
++safety settings).  The <expiration> and <reason> parameters are
++required.  The <lastmod> and <lifetime> parameters will be ignored if
++present.  Removing local mutes is similar--<mask> must be
++preceded by '-', and all other parameters are ignored to allow
++backwards compatibility.
++
++* Local modifications to global mutes.
++
++Remote servers, or opers on them, may also locally activate or
++deactivate a global mute on the local server.  The <target> must be
++set to the numeric of the local server, and <mask> must be preceded by
++either '<' (to locally deactivate the mute) or '>' (to locally
++activate the mute).  This local state overrides the global state of
++the mute, and persists until there is a global state change to the
++mute, or until the mute expires.  No other parameters are
++necessary in this mode, and will be ignored if present.
++
++* Global mutes.
++
++For creation and manipulation of global mutes, the <target>
++parameter must be set to "*".  If the mute does not exist, and if
++<expiration> is given, the mute will be created with the specified
++expiration and <reason> (the latter defaulting to "No reason" if not
++present).  Otherwise, the mute will be updated according to the
++available parameters.  The rules are similar to those for oper-issued
++global mutes, with the addition of a <lastmod> parameter, which is a
++monotonically increasing serial number for the mute, and an optional
++<lifetime> parameter that specifies a monotonically increasing
++lifetime for the mute record.  Note that, for existing mutes where
++only state changes (global activation or deactivation) are necessary,
++only <lastmod> is required; <expiration> must be specified for all
++other forms of the GL command.
+diff -Nurp ircu2.10.12.13-rc2/include/class.h ircu2.10.12.13-rc2-fakehost-mute/include/class.h
+--- ircu2.10.12.13-rc2/include/class.h	2005-10-04 20:53:30.000000000 -0500
++++ ircu2.10.12.13-rc2-fakehost-mute/include/class.h	2010-05-25 12:19:56.000000000 -0500
+@@ -42,6 +42,8 @@ struct ConnectionClass {
+   char                    *cc_name;       /**< Name of connection class. */
+   char                    *default_umode; /**< Default usermode for users
+                                              in this class. */
++  char                    *default_fakehost; /**< Default fakehost for users
++                                               in this class */
+   struct Privs            privs;          /**< Privilege bits that are set on
+                                              or off. */
+   struct Privs            privs_dirty;    /**< Indication of which bits in
+@@ -86,6 +88,8 @@ struct ConnectionClass {
+ #define ConfLinks(x)    ((x)->conn_class->ref_count)
+ /** Get default usermode for ConfItem \a x. */
+ #define ConfUmode(x)    ((x)->conn_class->default_umode)
++/** Get default fakehost for ConfItem \a x. */
++#define ConfFakehost(x) ((x)->conn_class->default_fakehost)
+ /** Find a valid configuration class by name. */
+ #define find_class(name) do_find_class((name), 0)
+ 
+diff -Nurp ircu2.10.12.13-rc2/include/client.h ircu2.10.12.13-rc2-fakehost-mute/include/client.h
+--- ircu2.10.12.13-rc2/include/client.h	2009-02-08 22:11:04.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/include/client.h	2010-05-25 12:19:56.000000000 -0500
+@@ -109,6 +109,8 @@ enum Priv
+     PRIV_DIE, /**< oper can DIE */
+     PRIV_GLINE, /**< oper can GLINE */
+     PRIV_LOCAL_GLINE, /**< oper can local GLINE */
++    PRIV_MUTE, /**< oper can MUTE */
++    PRIV_LOCAL_MUTE, /**< oper can local MUTE */
+     PRIV_JUPE, /**< oper can JUPE */
+     PRIV_LOCAL_JUPE, /**< oper can local JUPE */
+     PRIV_OPMODE, /**< oper can OP/CLEARMODE */
+@@ -122,10 +124,12 @@ enum Priv
+     PRIV_DISPLAY, /**< "Is an oper" displayed */
+     PRIV_SEE_OPERS, /**< display hidden opers */
+     PRIV_WIDE_GLINE, /**< oper can set wider G-lines */
++    PRIV_WIDE_MUTE, /**< oper can set wider mutes */
+     PRIV_LIST_CHAN, /**< oper can list secret channels */
+     PRIV_FORCE_OPMODE, /**< can hack modes on quarantined channels */
+     PRIV_FORCE_LOCAL_OPMODE, /**< can hack modes on quarantined local channels */
+     PRIV_APASS_OPMODE, /**< can hack modes +A/-A/+U/-U */
++    PRIV_SET_FAKEHOST, /**< can set own fakehost with /fake */
+     PRIV_LAST_PRIV /**< number of privileges */
+   };
+ 
+@@ -161,11 +165,13 @@ enum Flag
+     FLAG_INVISIBLE,                 /**< makes user invisible */
+     FLAG_WALLOP,                    /**< send wallops to them */
+     FLAG_DEAF,                      /**< Makes user deaf */
++    FLAG_MUTE,                      /**< User is mute */
+     FLAG_CHSERV,                    /**< Disallow KICK or MODE -o on the user;
+                                        don't display channels in /whois */
+     FLAG_DEBUG,                     /**< send global debug/anti-hack info */
+     FLAG_ACCOUNT,                   /**< account name has been set */
+     FLAG_HIDDENHOST,                /**< user's host is hidden */
++    FLAG_FAKEHOST,                  /**< user has been assigned a fake host */
+     FLAG_LAST_FLAG,                 /**< number of flags */
+     FLAG_LOCAL_UMODES = FLAG_LOCOP, /**< First local mode flag */
+     FLAG_GLOBAL_UMODES = FLAG_OPER  /**< First global mode flag */
+@@ -585,7 +591,9 @@ struct Client {
+ /** Return non-zero if the client has operator or server privileges. */
+ #define IsPrivileged(x)         (IsAnOper(x) || IsServer(x))
+ /** Return non-zero if the client's host is hidden. */
+-#define HasHiddenHost(x)        (IsHiddenHost(x) && IsAccount(x))
++#define HasHiddenHost(x)        (IsHiddenHost(x) && (IsAccount(x) || HasFakeHost(x)))
++/** Return non-zero if the client has a fake host set. */
++#define HasFakeHost(x)          HasFlag(x, FLAG_FAKEHOST)
+ 
+ /** Mark a client as having an in-progress net.burst. */
+ #define SetBurst(x)             SetFlag(x, FLAG_BURST)
+@@ -625,6 +633,8 @@ struct Client {
+ #define SetAccount(x)           SetFlag(x, FLAG_ACCOUNT)
+ /** Mark a client as having mode +x (hidden host). */
+ #define SetHiddenHost(x)        SetFlag(x, FLAG_HIDDENHOST)
++/** Mark a client as having a fake host. */
++#define SetFakeHost(x)          SetFlag(x, FLAG_FAKEHOST)
+ /** Mark a client as having a pending PING. */
+ #define SetPingSent(x)          SetFlag(x, FLAG_PINGSENT)
+ 
+@@ -658,6 +668,8 @@ struct Client {
+ #define ClearServNotice(x)      ClrFlag(x, FLAG_SERVNOTICE)
+ /** Remove mode +x (hidden host) from the client. */
+ #define ClearHiddenHost(x)      ClrFlag(x, FLAG_HIDDENHOST)
++/** Clear the client's fake host flag. */
++#define ClearFakeHost(x)        ClrFlag(x, FLAG_FAKEHOST)
+ /** Clear the client's pending PING flag. */
+ #define ClearPingSent(x)        ClrFlag(x, FLAG_PINGSENT)
+ /** Clear the client's HUB flag. */
+@@ -729,6 +741,7 @@ struct Client {
+ 
+ extern const char* get_client_name(const struct Client* sptr, int showip);
+ extern const char* client_get_default_umode(const struct Client* sptr);
++extern const char* client_get_default_fakehost(const struct Client* sptr);
+ extern int client_get_ping(const struct Client* local_client);
+ extern void client_drop_sendq(struct Connection* con);
+ extern void client_add_sendq(struct Connection* con,
+diff -Nurp ircu2.10.12.13-rc2/include/handlers.h ircu2.10.12.13-rc2-fakehost-mute/include/handlers.h
+--- ircu2.10.12.13-rc2/include/handlers.h	2010-01-02 14:33:10.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/include/handlers.h	2010-05-25 12:19:56.000000000 -0500
+@@ -91,7 +91,9 @@ extern int m_away(struct Client*, struct
+ extern int m_cap(struct Client*, struct Client*, int, char*[]);
+ extern int m_cnotice(struct Client*, struct Client*, int, char*[]);
+ extern int m_cprivmsg(struct Client*, struct Client*, int, char*[]);
++extern int m_fakehost(struct Client*, struct Client*, int, char*[]);
+ extern int m_gline(struct Client*, struct Client*, int, char*[]);
++extern int m_mute(struct Client*, struct Client*, int, char*[]);
+ extern int m_help(struct Client*, struct Client*, int, char*[]);
+ extern int m_ignore(struct Client*, struct Client*, int, char*[]);
+ extern int m_info(struct Client*, struct Client*, int, char*[]);
+@@ -148,6 +150,7 @@ extern int mo_connect(struct Client*, st
+ extern int mo_die(struct Client*, struct Client*, int, char*[]);
+ extern int mo_get(struct Client*, struct Client*, int, char*[]);
+ extern int mo_gline(struct Client*, struct Client*, int, char*[]);
++extern int mo_mute(struct Client*, struct Client*, int, char*[]);
+ extern int mo_info(struct Client*, struct Client*, int, char*[]);
+ extern int mo_jupe(struct Client*, struct Client*, int, char*[]);
+ extern int mo_kill(struct Client*, struct Client*, int, char*[]);
+@@ -188,7 +191,9 @@ extern int ms_desynch(struct Client*, st
+ extern int ms_end_of_burst(struct Client*, struct Client*, int, char*[]);
+ extern int ms_end_of_burst_ack(struct Client*, struct Client*, int, char*[]);
+ extern int ms_error(struct Client*, struct Client*, int, char*[]);
++extern int ms_fakehost(struct Client*, struct Client*, int, char*[]);
+ extern int ms_gline(struct Client*, struct Client*, int, char*[]);
++extern int ms_mute(struct Client*, struct Client*, int, char*[]);
+ extern int ms_info(struct Client*, struct Client*, int, char*[]);
+ extern int ms_invite(struct Client*, struct Client*, int, char*[]);
+ extern int ms_join(struct Client*, struct Client*, int, char*[]);
+diff -Nurp ircu2.10.12.13-rc2/include/ircd_features.h ircu2.10.12.13-rc2-fakehost-mute/include/ircd_features.h
+--- ircu2.10.12.13-rc2/include/ircd_features.h	2007-03-16 22:48:49.000000000 -0500
++++ ircu2.10.12.13-rc2-fakehost-mute/include/ircd_features.h	2010-05-25 12:19:39.000000000 -0500
+@@ -60,6 +60,7 @@ enum Feature {
+   FEAT_LOCAL_CHANNELS,
+   FEAT_TOPIC_BURST,
+   FEAT_DISABLE_GLINES,
++  FEAT_DISABLE_MUTES,
+ 
+   /* features that probably should not be touched */
+   FEAT_KILLCHASETIMELIMIT,
+@@ -76,6 +77,7 @@ enum Feature {
+   FEAT_CONNECTFREQUENCY,
+   FEAT_DEFAULTMAXSENDQLENGTH,
+   FEAT_GLINEMAXUSERCOUNT,
++  FEAT_MUTEMAXUSERCOUNT,
+   FEAT_SOCKSENDBUF,
+   FEAT_SOCKRECVBUF,
+   FEAT_IPCHECK_CLONE_LIMIT,
+diff -Nurp ircu2.10.12.13-rc2/include/msg.h ircu2.10.12.13-rc2-fakehost-mute/include/msg.h
+--- ircu2.10.12.13-rc2/include/msg.h	2010-01-02 14:33:10.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/include/msg.h	2010-05-25 12:19:56.000000000 -0500
+@@ -292,6 +292,10 @@ struct Client;
+ #define TOK_GLINE               "GL"
+ #define CMD_GLINE		MSG_GLINE, TOK_GLINE
+ 
++#define MSG_MUTE                "MUTE"         /* MUTE */
++#define TOK_MUTE                "MT"
++#define CMD_MUTE		MSG_MUTE, TOK_MUTE
++
+ #define MSG_BURST               "BURST"         /* BURS */
+ #define TOK_BURST               "B"
+ #define CMD_BURST		MSG_BURST, TOK_BURST
+@@ -340,6 +344,10 @@ struct Client;
+ #define TOK_ASLL               "LL"
+ #define CMD_ASLL               MSG_ASLL, TOK_ASLL
+ 
++#define MSG_FAKEHOST           "FAKE"          /* FAKE */
++#define TOK_FAKEHOST           "FA"
++#define CMD_FAKEHOST           MSG_FAKEHOST, TOK_FAKEHOST
++
+ #define MSG_POST                "POST"          /* POST */
+ #define TOK_POST                "POST"
+ 
+diff -Nurp ircu2.10.12.13-rc2/include/mute.h ircu2.10.12.13-rc2-fakehost-mute/include/mute.h
+--- ircu2.10.12.13-rc2/include/mute.h	1969-12-31 18:00:00.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/include/mute.h	2010-05-25 12:19:39.000000000 -0500
+@@ -0,0 +1,146 @@
++#ifndef INCLUDED_mute_h
++#define INCLUDED_mute_h
++/*
++ * IRC - Internet Relay Chat, include/mute.h
++ * Copyright (C) 1990 Jarkko Oikarinen and
++ *                    University of Oulu, Computing Center
++ * Copyright (C) 1996 -1997 Carlo Wood
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2, or (at your option)
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ */
++/** @file
++ * @brief Structures and APIs for mute manipulation.
++ * @version $Id: mute.h 1913 2009-07-04 22:46:00Z entrope $
++ */
++#ifndef INCLUDED_sys_types_h
++#include <sys/types.h>
++#define INCLUDED_sys_types_h
++#endif
++
++#ifndef INCLUDED_res_h
++#include "res.h"
++#endif
++
++struct Client;
++struct StatDesc;
++
++#define MUTE_MAX_EXPIRE 604800	/**< max expire: 7 days */
++
++/** Local state of a mute. */
++enum MuteLocalState {
++  MLOCAL_GLOBAL,		/**< mute state unmodified locally. */
++  MLOCAL_ACTIVATED,		/**< mute state locally activated. */
++  MLOCAL_DEACTIVATED		/**< mute state locally deactivated. */
++};
++
++/** Description of a mute. */
++struct Mute {
++  struct Mute *mt_next;	/**< Next mute in linked list. */
++  struct Mute**mt_prev_p;	/**< Previous pointer to this mute. */
++  char	       *mt_user;	/**< Username mask (or realname mask). */
++  char	       *mt_host;	/**< Host portion of mask. */
++  char	       *mt_reason;	/**< Reason for mute. */
++  time_t	mt_expire;	/**< Expiration timestamp. */
++  time_t	mt_lastmod;	/**< Last modification timestamp. */
++  time_t	mt_lifetime;	/**< Record expiration timestamp. */
++  struct irc_in_addr mt_addr;	/**< IP address (for IP-based mutes). */
++  unsigned char mt_bits;	/**< Bits in mt_addr used in the mask. */
++  unsigned int	mt_flags;	/**< mute status flags. */
++  enum MuteLocalState mt_state;/**< mute local state. */
++};
++
++/** Action to perform on a mute. */
++enum MuteAction {
++  MUTE_ACTIVATE,		/**< mute should be activated. */
++  MUTE_DEACTIVATE,		/**< mute should be deactivated. */
++  MUTE_LOCAL_ACTIVATE,		/**< mute should be locally activated. */
++  MUTE_LOCAL_DEACTIVATE,	/**< mute should be locally deactivated. */
++  MUTE_MODIFY			/**< mute should be modified. */
++};
++
++#define MUTE_ACTIVE	0x0001  /**< mute is active. */
++#define MUTE_IPMASK	0x0002  /**< mt_addr and mt_bits fields are valid. */
++#define MUTE_LOCAL	0x0008  /**< mute only applies to this server. */
++#define MUTE_ANY	0x0010  /**< Search flag: Find any mute. */
++#define MUTE_FORCE	0x0020  /**< Override normal limits on mutes. */
++#define MUTE_EXACT	0x0040  /**< Exact match only (no wildcards). */
++#define MUTE_LDEACT	0x0080	/**< Locally deactivated. */
++#define MUTE_GLOBAL	0x0100	/**< Find only global mutes. */
++#define MUTE_LASTMOD	0x0200	/**< Find only mutes with non-zero lastmod. */
++#define MUTE_OPERFORCE	0x0400	/**< Oper forcing mute to be set. */
++#define MUTE_REALNAME  0x0800  /**< mute matches only the realname field. */
++
++#define MUTE_EXPIRE	0x1000	/**< Expiration time update */
++#define MUTE_LIFETIME	0x2000	/**< Record lifetime update */
++#define MUTE_REASON	0x4000	/**< Reason update */
++
++/** Controllable flags that can be set on an actual mute. */
++#define MUTE_MASK	(MUTE_ACTIVE | MUTE_LOCAL | MUTE_REALNAME)
++/** Mask for mute activity flags. */
++#define MUTE_ACTMASK	(MUTE_ACTIVE | MUTE_LDEACT)
++
++/** Mask for mute update flags. */
++#define MUTE_UPDATE	(MUTE_EXPIRE | MUTE_LIFETIME | MUTE_REASON)
++
++/** Test whether \a m is active. */
++#define MuteIsActive(m)	((((m)->mt_flags & MUTE_ACTIVE) &&	  \
++				  (m)->mt_state != MLOCAL_DEACTIVATED) || \
++				 (m)->mt_state == MLOCAL_ACTIVATED)
++/** Test whether \a m is remotely (globally) active. */
++#define MuteIsRemActive(m)	((m)->mt_flags & MUTE_ACTIVE)
++/** Test whether \a m is an IP-based mute. */
++#define MuteIsIpMask(m)	((m)->mt_flags & MUTE_IPMASK)
++/** Test whether \a m is a realname-based mute. */
++#define MuteIsRealName(m)      ((m)->mt_flags & MUTE_REALNAME)
++/** Test whether \a m is local to this server. */
++#define MuteIsLocal(m)		((m)->mt_flags & MUTE_LOCAL)
++/** Test whether \a c has a matching mute. */
++#define MuteLookup(c)     (!feature_bool(FEAT_DISABLE_MUTES) && mute_lookup((c), 0))
++
++/** Return user mask of a mute. */
++#define MuteUser(m)		((m)->mt_user)
++/** Return host mask of a mute. */
++#define MuteHost(m)		((m)->mt_host)
++/** Return reason/message of a mute. */
++#define MuteReason(m)		((m)->mt_reason)
++/** Return last modification time of a mute. */
++#define MuteLastMod(m)		((m)->mt_lastmod)
++
++extern int mute_add(struct Client *cptr, struct Client *sptr, char *userhost,
++		     char *reason, time_t expire, time_t lastmod,
++		     time_t lifetime, unsigned int flags);
++extern int mute_activate(struct Client *cptr, struct Client *sptr,
++			  struct Mute *mute, time_t lastmod,
++			  unsigned int flags);
++extern int mute_deactivate(struct Client *cptr, struct Client *sptr,
++			    struct Mute *mute, time_t lastmod,
++			    unsigned int flags);
++extern int mute_modify(struct Client *cptr, struct Client *sptr,
++			struct Mute *mute, enum MuteAction action,
++			char *reason, time_t expire, time_t lastmod,
++			time_t lifetime, unsigned int flags);
++extern int mute_destroy(struct Client *cptr, struct Client *sptr,
++			 struct Mute *mute);
++extern struct Mute *mute_find(char *userhost, unsigned int flags);
++extern struct Mute *mute_lookup(struct Client *cptr, unsigned int flags);
++extern void mute_free(struct Mute *mute, int reapply);
++extern void mute_burst(struct Client *cptr);
++extern int mute_resend(struct Client *cptr, struct Mute *mute);
++extern int mute_list(struct Client *sptr, char *userhost);
++extern void mute_stats(struct Client *sptr, const struct StatDesc *sd,
++                        char *param);
++extern int mute_memory_count(size_t *mt_size);
++
++#endif /* INCLUDED_mute_h */
+diff -Nurp ircu2.10.12.13-rc2/include/numeric.h ircu2.10.12.13-rc2-fakehost-mute/include/numeric.h
+--- ircu2.10.12.13-rc2/include/numeric.h	2009-02-08 19:30:13.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/include/numeric.h	2010-05-25 12:19:39.000000000 -0500
+@@ -131,6 +131,7 @@ extern const struct Numeric* get_error_n
+ /*      RPL_STATSIAUTH       239           IRCnet extension */
+ /*      RPL_STATSVLINE       240           IRCnet extension */
+ /*	RPL_STATSXLINE	     240	austnet */
++#define RPL_STATSMUTE        240        /* Undernet extension */
+ #define RPL_STATSLLINE       241	/* Undernet dynamicly loaded modules */
+ #define RPL_STATSUPTIME      242
+ #define RPL_STATSOLINE       243
+@@ -177,6 +178,8 @@ extern const struct Numeric* get_error_n
+ #define RPL_STATSDLINE       275        /* Undernet extension */
+ #define RPL_STATSRLINE       276        /* Undernet extension */
+ 
++#define RPL_MUTELIST         278        /* Undernet extension */
++#define RPL_ENDOFMUTELIST    279        /* Undernet extension */
+ #define RPL_GLIST            280        /* Undernet extension */
+ #define RPL_ENDOFGLIST       281        /* Undernet extension */
+ #define RPL_JUPELIST         282        /* Undernet extension - jupe -Kev */
+@@ -433,6 +436,7 @@ extern const struct Numeric* get_error_n
+ /*      ERR_GHOSTEDCLIENT    503           efnet */
+ /*	ERR_VWORLDWARN	     503	   austnet */
+ 
++#define ERR_NOSUCHMUTE       510        /* Undernet extension */
+ #define ERR_SILELISTFULL     511        /* Undernet extension */
+ /*      ERR_NOTIFYFULL       512           aircd */
+ /*	ERR_TOOMANYWATCH     512           Numeric List: Dalnet */
+diff -Nurp ircu2.10.12.13-rc2/include/s_user.h ircu2.10.12.13-rc2-fakehost-mute/include/s_user.h
+--- ircu2.10.12.13-rc2/include/s_user.h	2007-07-13 21:40:01.000000000 -0500
++++ ircu2.10.12.13-rc2-fakehost-mute/include/s_user.h	2010-05-25 12:19:56.000000000 -0500
+@@ -79,7 +79,8 @@ extern int whisper(struct Client* source
+ extern void send_user_info(struct Client* to, char* names, int rpl,
+                            InfoFormatter fmt);
+ 
+-extern int hide_hostmask(struct Client *cptr, unsigned int flags);
++extern void make_hidden_hostmask(char *buffer, struct Client *cptr);
++extern int hide_hostmask(struct Client *cptr);
+ extern int set_user_mode(struct Client *cptr, struct Client *sptr,
+                          int parc, char *parv[], int allow_modes);
+ extern int is_silenced(struct Client *sptr, struct Client *acptr);
+diff -Nurp ircu2.10.12.13-rc2/include/struct.h ircu2.10.12.13-rc2-fakehost-mute/include/struct.h
+--- ircu2.10.12.13-rc2/include/struct.h	2007-01-14 21:08:23.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/include/struct.h	2010-05-25 12:19:56.000000000 -0500
+@@ -82,6 +82,7 @@ struct User {
+   char               username[USERLEN + 1];
+   char               host[HOSTLEN + 1];       /**< displayed hostname */
+   char               realhost[HOSTLEN + 1];   /**< actual hostname */
++  char               fakehost[HOSTLEN + 1];   /**< fake hostname */
+   char               account[ACCOUNTLEN + 1]; /**< IRC account name */
+   time_t	     acc_create;              /**< IRC account timestamp */
+ };
+diff -Nurp ircu2.10.12.13-rc2/ircd/Makefile.in ircu2.10.12.13-rc2-fakehost-mute/ircd/Makefile.in
+--- ircu2.10.12.13-rc2/ircd/Makefile.in	2010-01-04 11:15:13.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/Makefile.in	2010-05-25 12:19:56.000000000 -0500
+@@ -130,6 +130,7 @@ IRCD_SRC = \
+ 	m_die.c \
+ 	m_endburst.c \
+ 	m_error.c \
++	m_fakehost.c \
+ 	m_get.c \
+ 	m_gline.c \
+ 	m_help.c \
+@@ -146,6 +147,7 @@ IRCD_SRC = \
+ 	m_map.c \
+ 	m_mode.c \
+ 	m_motd.c \
++	m_mute.c \
+ 	m_names.c \
+ 	m_nick.c \
+ 	m_notice.c \
+@@ -192,6 +194,7 @@ IRCD_SRC = \
+ 	memdebug.c \
+ 	motd.c \
+ 	msgq.c \
++	mute.c \
+ 	numnicks.c \
+ 	opercmds.c \
+ 	os_generic.c \
+@@ -371,7 +374,7 @@ channel.o: channel.c ../config.h ../incl
+   ../include/ircd_defs.h ../include/ircd_features.h ../include/ircd_log.h \
+   ../include/ircd_reply.h ../include/ircd_snprintf.h \
+   ../include/ircd_string.h ../include/list.h ../include/match.h \
+-  ../include/msg.h ../include/msgq.h ../include/numeric.h \
++  ../include/msg.h ../include/msgq.h ../include/mute.h ../include/numeric.h \
+   ../include/numnicks.h ../include/querycmds.h ../include/ircd_features.h \
+   ../include/s_bsd.h ../include/s_conf.h ../include/client.h \
+   ../include/s_debug.h ../include/s_misc.h ../include/s_user.h \
+@@ -490,9 +493,9 @@ ircd_relay.o: ircd_relay.c ../config.h .
+   ../include/hash.h ../include/ircd.h ../include/struct.h \
+   ../include/ircd_chattr.h ../include/ircd_features.h \
+   ../include/ircd_log.h ../include/ircd_reply.h ../include/ircd_string.h \
+-  ../include/match.h ../include/msg.h ../include/numeric.h \
+-  ../include/numnicks.h ../include/s_debug.h ../include/s_misc.h \
+-  ../include/s_user.h ../include/send.h
++  ../include/match.h ../include/msg.h ../include/mute.h \
++  ../include/numeric.h ../include/numnicks.h ../include/s_debug.h \
++  ../include/s_misc.h ../include/s_user.h ../include/send.h
+ ircd_reply.o: ircd_reply.c ../config.h ../include/ircd_reply.h \
+   ../include/client.h ../include/ircd_defs.h ../include/dbuf.h \
+   ../include/msgq.h ../include/ircd_events.h ../config.h \
+@@ -591,6 +594,13 @@ m_asll.o: m_asll.c ../config.h ../includ
+   ../include/ircd_string.h ../include/ircd_chattr.h ../include/numeric.h \
+   ../include/numnicks.h ../include/match.h ../include/msg.h \
+   ../include/send.h ../include/s_bsd.h ../include/s_user.h
++m_fakehost.o: m_fakehost.c ../config.h ../include/client.h \
++  ../include/ircd_defs.h ../include/dbuf.h ../include/msgq.h \
++  ../include/ircd_events.h ../include/ircd_handler.h ../include/hash.h \
++  ../include/ircd.h ../include/struct.h ../include/ircd_reply.h \
++  ../include/ircd_string.h ../include/ircd_chattr.h ../include/msg.h \
++  ../include/numeric.h ../include/numnicks.h ../include/s_conf.h \
++  ../include/s_user.h ../include/send.h
+ m_away.o: m_away.c ../config.h ../include/client.h ../include/ircd_defs.h \
+   ../include/dbuf.h ../include/msgq.h ../include/ircd_events.h \
+   ../config.h ../include/ircd_handler.h ../include/res.h \
+@@ -848,6 +858,16 @@ m_motd.o: m_motd.c ../config.h ../includ
+   ../include/msg.h ../include/numeric.h ../include/numnicks.h \
+   ../include/s_conf.h ../include/client.h ../include/class.h \
+   ../include/s_user.h ../include/send.h
++m_mute.o: m_mute.c ../config.h ../include/client.h \
++  ../include/ircd_defs.h ../include/dbuf.h ../include/msgq.h \
++  ../include/ircd_events.h ../config.h ../include/ircd_handler.h \
++  ../include/res.h ../include/capab.h ../include/mute.h \
++  ../include/hash.h ../include/ircd.h ../include/struct.h \
++  ../include/ircd_features.h ../include/ircd_log.h \
++  ../include/ircd_reply.h ../include/ircd_string.h \
++  ../include/ircd_chattr.h ../include/match.h ../include/msg.h \
++  ../include/numeric.h ../include/numnicks.h ../include/s_conf.h \
++  ../include/client.h ../include/s_misc.h ../include/send.h
+ m_names.o: m_names.c ../config.h ../include/channel.h \
+   ../include/ircd_defs.h ../include/res.h ../config.h ../include/client.h \
+   ../include/dbuf.h ../include/msgq.h ../include/ircd_events.h \
+@@ -960,10 +980,10 @@ m_pseudo.o: m_pseudo.c ../config.h ../in
+ m_quit.o: m_quit.c ../config.h ../include/channel.h \
+   ../include/ircd_defs.h ../include/res.h ../config.h ../include/client.h \
+   ../include/dbuf.h ../include/msgq.h ../include/ircd_events.h \
+-  ../include/ircd_handler.h ../include/capab.h ../include/ircd.h \
+-  ../include/struct.h ../include/ircd_log.h ../include/ircd_string.h \
+-  ../include/ircd_chattr.h ../include/struct.h ../include/s_misc.h \
+-  ../include/ircd_reply.h
++  ../include/ircd_handler.h ../include/ircd_features.h ../include/capab.h \
++  ../include/ircd.h ../include/struct.h ../include/ircd_log.h \
++  ../include/ircd_string.h ../include/ircd_chattr.h ../include/struct.h \
++  ../include/s_misc.h ../include/ircd_reply.h ../include/mute.h
+ m_rehash.o: m_rehash.c ../config.h ../include/client.h \
+   ../include/ircd_defs.h ../include/dbuf.h ../include/msgq.h \
+   ../include/ircd_events.h ../config.h ../include/ircd_handler.h \
+@@ -1209,6 +1229,17 @@ msgq.o: msgq.c ../config.h ../include/ms
+   ../include/ircd_defs.h ../include/ircd_features.h ../include/ircd_log.h \
+   ../include/ircd_reply.h ../include/ircd_snprintf.h ../include/numeric.h \
+   ../include/send.h ../include/s_debug.h ../config.h ../include/s_stats.h
++mute.o: mute.c ../config.h ../include/mute.h ../include/res.h \
++  ../config.h ../include/client.h ../include/ircd_defs.h \
++  ../include/dbuf.h ../include/msgq.h ../include/ircd_events.h \
++  ../include/ircd_handler.h ../include/capab.h ../include/ircd.h \
++  ../include/struct.h ../include/ircd_alloc.h ../include/ircd_features.h \
++  ../include/ircd_log.h ../include/ircd_reply.h \
++  ../include/ircd_snprintf.h ../include/ircd_string.h \
++  ../include/ircd_chattr.h ../include/match.h ../include/numeric.h \
++  ../include/s_bsd.h ../include/s_debug.h ../include/s_misc.h \
++  ../include/s_stats.h ../include/send.h ../include/struct.h \
++  ../include/msg.h ../include/numnicks.h ../include/whocmds.h
+ numnicks.o: numnicks.c ../config.h ../include/numnicks.h \
+   ../include/client.h ../include/ircd_defs.h ../include/dbuf.h \
+   ../include/msgq.h ../include/ircd_events.h ../config.h \
+@@ -1365,7 +1396,7 @@ s_stats.o: s_stats.c ../config.h ../incl
+   ../include/ircd_features.h ../include/ircd_crypt.h \
+   ../include/ircd_log.h ../include/ircd_reply.h ../include/ircd_string.h \
+   ../include/listener.h ../include/list.h ../include/match.h \
+-  ../include/motd.h ../include/msg.h ../include/msgq.h \
++  ../include/motd.h ../include/msg.h ../include/msgq.h ../include/mute.h \
+   ../include/numeric.h ../include/numnicks.h ../include/querycmds.h \
+   ../include/ircd_features.h ../include/res.h ../include/s_auth.h \
+   ../include/s_bsd.h ../include/s_conf.h ../include/s_debug.h \
+@@ -1382,13 +1413,14 @@ s_user.o: s_user.c ../config.h ../includ
+   ../include/ircd_log.h ../include/ircd_reply.h \
+   ../include/ircd_snprintf.h ../include/ircd_string.h ../include/list.h \
+   ../include/match.h ../include/motd.h ../include/msg.h ../include/msgq.h \
+-  ../include/numeric.h ../include/numnicks.h ../include/parse.h \
+-  ../include/querycmds.h ../include/ircd_features.h ../include/random.h \
+-  ../include/s_auth.h ../include/s_bsd.h ../include/s_conf.h \
+-  ../include/s_debug.h ../include/s_misc.h ../include/s_serv.h \
+-  ../include/send.h ../include/struct.h ../include/supported.h \
+-  ../include/channel.h ../include/sys.h ../include/userload.h \
+-  ../include/version.h ../include/whowas.h ../include/handlers.h
++  ../include/mute.h ../include/numeric.h ../include/numnicks.h \
++  ../include/parse.h ../include/querycmds.h ../include/ircd_features.h \
++  ../include/random.h ../include/s_auth.h ../include/s_bsd.h \
++  ../include/s_conf.h ../include/s_debug.h ../include/s_misc.h \
++  ../include/s_serv.h ../include/send.h ../include/struct.h \
++  ../include/supported.h ../include/channel.h ../include/sys.h \
++  ../include/userload.h ../include/version.h ../include/whowas.h \
++  ../include/handlers.h
+ send.o: send.c ../config.h ../include/send.h ../include/channel.h \
+   ../include/ircd_defs.h ../include/res.h ../config.h ../include/class.h \
+   ../include/client.h ../include/dbuf.h ../include/msgq.h \
+diff -Nurp ircu2.10.12.13-rc2/ircd/channel.c ircu2.10.12.13-rc2-fakehost-mute/ircd/channel.c
+--- ircu2.10.12.13-rc2/ircd/channel.c	2010-01-03 15:04:54.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/channel.c	2010-05-25 12:19:56.000000000 -0500
+@@ -40,6 +40,7 @@
+ #include "match.h"
+ #include "msg.h"
+ #include "msgq.h"
++#include "mute.h"
+ #include "numeric.h"
+ #include "numnicks.h"
+ #include "querycmds.h"
+@@ -374,17 +375,26 @@ struct Ban *find_ban(struct Client *cptr
+   char        tmphost[HOSTLEN + 1];
+   char        iphost[SOCKIPLEN + 1];
+   char       *hostmask;
+-  char       *sr;
++  char       *sr, *sr2;
+   struct Ban *found;
+ 
+   /* Build nick!user and alternate host names. */
+   ircd_snprintf(0, nu, sizeof(nu), "%s!%s",
+                 cli_name(cptr), cli_user(cptr)->username);
+   ircd_ntoa_r(iphost, &cli_ip(cptr));
++  sr2 = NULL;
+   if (!IsAccount(cptr))
+     sr = NULL;
+   else if (HasHiddenHost(cptr))
++  {
+     sr = cli_user(cptr)->realhost;
++    if (HasFakeHost(cptr))
++    {
++      ircd_snprintf(0, tmphost, HOSTLEN, "%s.%s",
++                    cli_user(cptr)->account, feature_str(FEAT_HIDDEN_HOST));
++      sr2 = tmphost;
++    }
++  }
+   else
+   {
+     ircd_snprintf(0, tmphost, HOSTLEN, "%s.%s",
+@@ -409,7 +419,8 @@ struct Ban *find_ban(struct Client *cptr
+     if (!((banlist->flags & BAN_IPMASK)
+          && ipmask_check(&cli_ip(cptr), &banlist->address, banlist->addrbits))
+         && match(hostmask, cli_user(cptr)->host)
+-        && !(sr && !match(hostmask, sr)))
++        && !(sr && !match(hostmask, sr))
++        && !(sr2 && !match(hostmask, sr2)))
+         continue;
+     /* If an exception matches, no ban can match. */
+     if (banlist->flags & BAN_EXCEPTION)
+@@ -661,6 +672,7 @@ int has_voice(struct Client* cptr, struc
+  *
+  * A user can speak on a channel iff:
+  * <ol>
++ *  <li> They aren't muted.
+  *  <li> They didn't use the Apass to gain ops.
+  *  <li> They are op'd or voice'd.
+  *  <li> You aren't banned.
+@@ -692,6 +704,10 @@ int member_can_send_to_channel(struct Me
+     return 1;
+   }
+ 
++  /* If you're mute, you can't speak. */
++  if (MuteLookup(member->user))
++    return 0;
++  
+   /* Discourage using the Apass to get op.  They should use the Upass. */
+   if (IsChannelManager(member) && member->channel->mode.apass[0])
+     return 0;
+@@ -746,6 +762,10 @@ int client_can_send_to_channel(struct Cl
+   if (IsServer(cptr))
+     return 1;
+ 
++  /* If you're mute, you can't speak. */
++  if (MuteLookup(cptr))
++    return 0;
++
+   member = find_channel_member(cptr, chptr);
+ 
+   /*
+diff -Nurp ircu2.10.12.13-rc2/ircd/client.c ircu2.10.12.13-rc2-fakehost-mute/ircd/client.c
+--- ircu2.10.12.13-rc2/ircd/client.c	2005-10-12 18:52:12.000000000 -0500
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/client.c	2010-05-25 12:19:56.000000000 -0500
+@@ -88,6 +88,26 @@ const char* client_get_default_umode(con
+   return NULL;
+ }
+ 
++/*
++ * client_get_default_fakehost
++ * returns default fakehost in attached client connection class
++ */
++const char* client_get_default_fakehost(const struct Client* sptr)
++{
++  struct ConfItem* aconf;
++  struct SLink* link;
++  
++  assert(cli_verify(sptr));
++  
++  for (link = cli_confs(sptr); link; link = link->next) {
++    aconf = link->value.aconf;
++    if ((aconf->status & CONF_CLIENT) && ConfFakehost(aconf))
++      return ConfFakehost(aconf);
++  }
++  
++  return NULL;
++}
++
+ /** Remove a connection from the list of connections with queued data.
+  * @param[in] con Connection with no queued data.
+  */
+@@ -158,6 +178,7 @@ client_set_privs(struct Client *client, 
+     FlagClr(&privs_global, PRIV_BADCHAN);
+     FlagClr(&privs_global, PRIV_LOCAL_BADCHAN);
+     FlagClr(&privs_global, PRIV_APASS_OPMODE);
++    FlagClr(&privs_global, PRIV_SET_FAKEHOST);
+ 
+     memset(&privs_local, 0, sizeof(privs_local));
+     FlagSet(&privs_local, PRIV_CHAN_LIMIT);
+@@ -215,6 +236,7 @@ client_set_privs(struct Client *client, 
+     /* if they don't propagate oper status, prevent desyncs */
+     ClrPriv(client, PRIV_KILL);
+     ClrPriv(client, PRIV_GLINE);
++    ClrPriv(client, PRIV_MUTE);
+     ClrPriv(client, PRIV_JUPE);
+     ClrPriv(client, PRIV_OPMODE);
+     ClrPriv(client, PRIV_BADCHAN);
+@@ -235,7 +257,7 @@ static struct {
+   P(OPMODE),         P(LOCAL_OPMODE),   P(SET),           P(WHOX),
+   P(BADCHAN),        P(LOCAL_BADCHAN),  P(SEE_CHAN),      P(PROPAGATE),
+   P(DISPLAY),        P(SEE_OPERS),      P(WIDE_GLINE),    P(LIST_CHAN),
+-  P(FORCE_OPMODE),   P(FORCE_LOCAL_OPMODE), P(APASS_OPMODE),
++  P(FORCE_OPMODE),   P(FORCE_LOCAL_OPMODE), P(APASS_OPMODE), P(SET_FAKEHOST),
+ #undef P
+   { 0, 0 }
+ };
+diff -Nurp ircu2.10.12.13-rc2/ircd/ircd_features.c ircu2.10.12.13-rc2-fakehost-mute/ircd/ircd_features.c
+--- ircu2.10.12.13-rc2/ircd/ircd_features.c	2010-01-01 22:00:13.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/ircd_features.c	2010-05-25 12:19:39.000000000 -0500
+@@ -325,6 +325,7 @@ static struct FeatureDesc {
+   F_B(LOCAL_CHANNELS, 0, 1, 0),
+   F_B(TOPIC_BURST, 0, 0, 0),
+   F_B(DISABLE_GLINES, 0, 0, 0),
++  F_B(DISABLE_MUTES, 0, 0, 0),
+ 
+   /* features that probably should not be touched */
+   F_I(KILLCHASETIMELIMIT, 0, 30, 0),
+@@ -341,6 +342,7 @@ static struct FeatureDesc {
+   F_I(CONNECTFREQUENCY, 0, 600, init_class),
+   F_I(DEFAULTMAXSENDQLENGTH, 0, 40000, init_class),
+   F_I(GLINEMAXUSERCOUNT, 0, 20, 0),
++  F_I(MUTEMAXUSERCOUNT, 0, 20, 0),
+   F_I(SOCKSENDBUF, 0, SERVER_TCP_WINDOW, 0),
+   F_I(SOCKRECVBUF, 0, SERVER_TCP_WINDOW, 0),
+   F_I(IPCHECK_CLONE_LIMIT, 0, 4, 0),
+diff -Nurp ircu2.10.12.13-rc2/ircd/ircd_lexer.l ircu2.10.12.13-rc2-fakehost-mute/ircd/ircd_lexer.l
+--- ircu2.10.12.13-rc2/ircd/ircd_lexer.l	2007-11-30 16:10:04.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/ircd_lexer.l	2010-05-25 12:19:56.000000000 -0500
+@@ -101,6 +101,7 @@ static struct lexer_token {
+   TOKEN(PSEUDO),
+   TOKEN(PREPEND),
+   TOKEN(USERMODE),
++  TOKEN(FAKEHOST),
+   TOKEN(FAST),
+   TOKEN(AUTOCONNECT),
+   TOKEN(PROGRAM),
+@@ -128,12 +129,14 @@ static struct lexer_token {
+   { "list_chan", TPRIV_LIST_CHAN },
+   { "local_badchan", TPRIV_LOCAL_BADCHAN },
+   { "local_gline", TPRIV_LOCAL_GLINE },
++  { "local_mute", TPRIV_LOCAL_MUTE },
+   { "local_jupe", TPRIV_LOCAL_JUPE },
+   { "local_kill", TPRIV_LOCAL_KILL },
+   { "local_opmode", TPRIV_LOCAL_OPMODE },
+   { "mb", MBYTES },
+   { "megabytes", MBYTES },
+   { "mode_lchan", TPRIV_MODE_LCHAN },
++  { "mute", TPRIV_MUTE },
+   { "operator", OPER },
+   { "opmode", TPRIV_OPMODE },
+   { "password", PASS },
+@@ -144,6 +147,7 @@ static struct lexer_token {
+   { "see_chan", TPRIV_SEE_CHAN },
+   { "see_opers", TPRIV_SEE_OPERS },
+   { "set", TPRIV_SET },
++  { "set_fakehost", TPRIV_SET_FAKEHOST },
+   { "show_all_invis", TPRIV_SHOW_ALL_INVIS },
+   { "show_invis", TPRIV_SHOW_INVIS },
+   { "tb", TBYTES },
+@@ -151,6 +155,7 @@ static struct lexer_token {
+   { "unlimit_query", TPRIV_UNLIMIT_QUERY },
+   { "walk_lchan", TPRIV_WALK_LCHAN },
+   { "wide_gline", TPRIV_WIDE_GLINE },
++  { "wide_mute", TPRIV_WIDE_MUTE },
+   { "whox", TPRIV_WHOX },
+   { NULL, 0 }
+ };
+diff -Nurp ircu2.10.12.13-rc2/ircd/ircd_parser.y ircu2.10.12.13-rc2-fakehost-mute/ircd/ircd_parser.y
+--- ircu2.10.12.13-rc2/ircd/ircd_parser.y	2009-02-08 22:11:04.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/ircd_parser.y	2010-05-25 12:20:36.000000000 -0500
+@@ -168,6 +168,7 @@ static void free_slist(struct SLink **li
+ %token PSEUDO
+ %token PREPEND
+ %token USERMODE
++%token FAKEHOST
+ %token IAUTH
+ %token TIMEOUT
+ %token FAST
+@@ -178,11 +179,11 @@ static void free_slist(struct SLink **li
+ /* and now a lot of privileges... */
+ %token TPRIV_CHAN_LIMIT TPRIV_MODE_LCHAN TPRIV_DEOP_LCHAN TPRIV_WALK_LCHAN
+ %token TPRIV_LOCAL_KILL TPRIV_REHASH TPRIV_RESTART TPRIV_DIE
+-%token TPRIV_GLINE TPRIV_LOCAL_GLINE TPRIV_LOCAL_JUPE TPRIV_LOCAL_BADCHAN
++%token TPRIV_GLINE TPRIV_MUTE TPRIV_LOCAL_GLINE TPRIV_LOCAL_MUTE TPRIV_LOCAL_JUPE TPRIV_LOCAL_BADCHAN
+ %token TPRIV_LOCAL_OPMODE TPRIV_OPMODE TPRIV_SET TPRIV_WHOX TPRIV_BADCHAN
+ %token TPRIV_SEE_CHAN TPRIV_SHOW_INVIS TPRIV_SHOW_ALL_INVIS TPRIV_PROPAGATE
+-%token TPRIV_UNLIMIT_QUERY TPRIV_DISPLAY TPRIV_SEE_OPERS TPRIV_WIDE_GLINE
+-%token TPRIV_FORCE_OPMODE TPRIV_FORCE_LOCAL_OPMODE TPRIV_APASS_OPMODE
++%token TPRIV_UNLIMIT_QUERY TPRIV_DISPLAY TPRIV_SEE_OPERS TPRIV_WIDE_GLINE TPRIV_WIDE_MUTE
++%token TPRIV_FORCE_OPMODE TPRIV_FORCE_LOCAL_OPMODE TPRIV_APASS_OPMODE TPRIV_SET_FAKEHOST
+ %token TPRIV_LIST_CHAN
+ /* and some types... */
+ %type <num> sizespec
+@@ -417,6 +418,7 @@ classblock: CLASS {
+     c_class = find_class(name);
+     MyFree(c_class->default_umode);
+     c_class->default_umode = pass;
++    c_class->default_fakehost = host;
+     memcpy(&c_class->privs, &privs, sizeof(c_class->privs));
+     memcpy(&c_class->privs_dirty, &privs_dirty, sizeof(c_class->privs_dirty));
+   }
+@@ -425,6 +427,7 @@ classblock: CLASS {
+   }
+   name = NULL;
+   pass = NULL;
++  host = NULL;
+   tconn = 0;
+   maxlinks = 0;
+   sendq = 0;
+@@ -433,7 +436,7 @@ classblock: CLASS {
+ };
+ classitems: classitem classitems | classitem;
+ classitem: classname | classpingfreq | classconnfreq | classmaxlinks |
+-           classsendq | classusermode | priv;
++           classsendq | classusermode | classfakehost | priv;
+ classname: NAME '=' QSTRING ';'
+ {
+   MyFree(name);
+@@ -460,6 +463,12 @@ classusermode: USERMODE '=' QSTRING ';'
+   MyFree(pass);
+   pass = $3;
+ };
++classfakehost: FAKEHOST '=' QSTRING ';'
++{
++  if (host)
++    MyFree(host);
++  DupString(host, yylval.text);
++};
+ 
+ connectblock: CONNECT
+ {
+@@ -661,6 +670,8 @@ privtype: TPRIV_CHAN_LIMIT { $$ = PRIV_C
+           TPRIV_DIE { $$ = PRIV_DIE; } |
+           TPRIV_GLINE { $$ = PRIV_GLINE; } |
+           TPRIV_LOCAL_GLINE { $$ = PRIV_LOCAL_GLINE; } |
++          TPRIV_MUTE { $$ = PRIV_MUTE; } |
++          TPRIV_LOCAL_MUTE { $$ = PRIV_LOCAL_MUTE; } |
+           JUPE { $$ = PRIV_JUPE; } |
+           TPRIV_LOCAL_JUPE { $$ = PRIV_LOCAL_JUPE; } |
+           TPRIV_LOCAL_OPMODE { $$ = PRIV_LOCAL_OPMODE; } |
+@@ -677,11 +688,13 @@ privtype: TPRIV_CHAN_LIMIT { $$ = PRIV_C
+           TPRIV_DISPLAY { $$ = PRIV_DISPLAY; } |
+           TPRIV_SEE_OPERS { $$ = PRIV_SEE_OPERS; } |
+           TPRIV_WIDE_GLINE { $$ = PRIV_WIDE_GLINE; } |
++          TPRIV_WIDE_MUTE { $$ = PRIV_WIDE_MUTE; } |
+           TPRIV_LIST_CHAN { $$ = PRIV_LIST_CHAN; } |
+           LOCAL { $$ = PRIV_PROPAGATE; invert = 1; } |
+           TPRIV_FORCE_OPMODE { $$ = PRIV_FORCE_OPMODE; } |
+           TPRIV_FORCE_LOCAL_OPMODE { $$ = PRIV_FORCE_LOCAL_OPMODE; } |
+-          TPRIV_APASS_OPMODE { $$ = PRIV_APASS_OPMODE; } ;
++          TPRIV_APASS_OPMODE { $$ = PRIV_APASS_OPMODE; } |
++          TPRIV_SET_FAKEHOST { $$ = PRIV_SET_FAKEHOST; } ;
+ 
+ yesorno: YES { $$ = 1; } | NO { $$ = 0; };
+ 
+diff -Nurp ircu2.10.12.13-rc2/ircd/ircd_relay.c ircu2.10.12.13-rc2-fakehost-mute/ircd/ircd_relay.c
+--- ircu2.10.12.13-rc2/ircd/ircd_relay.c	2009-07-04 17:46:00.000000000 -0500
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/ircd_relay.c	2010-05-25 12:19:39.000000000 -0500
+@@ -57,6 +57,7 @@
+ #include "ircd_string.h"
+ #include "match.h"
+ #include "msg.h"
++#include "mute.h"
+ #include "numeric.h"
+ #include "numnicks.h"
+ #include "s_debug.h"
+@@ -262,7 +263,7 @@ void relay_directed_message(struct Clien
+   if (host)
+     *--host = '%';
+ 
+-  if (!(is_silenced(sptr, acptr)))
++  if (!(is_silenced(sptr, acptr)) && !MuteLookup(sptr))
+     sendcmdto_one(sptr, CMD_PRIVATE, acptr, "%s :%s", name, text);
+ }
+ 
+@@ -311,7 +312,7 @@ void relay_directed_notice(struct Client
+   if (host)
+     *--host = '%';
+ 
+-  if (!(is_silenced(sptr, acptr)))
++  if (!(is_silenced(sptr, acptr)) && !MuteLookup(sptr))
+     sendcmdto_one(sptr, CMD_NOTICE, acptr, "%s :%s", name, text);
+ }
+ 
+@@ -337,7 +338,8 @@ void relay_private_message(struct Client
+   }
+   if ((!IsChannelService(acptr) &&
+        check_target_limit(sptr, acptr, cli_name(acptr), 0)) ||
+-      is_silenced(sptr, acptr))
++      is_silenced(sptr, acptr) ||
++      MuteLookup(sptr))
+     return;
+ 
+   /*
+@@ -373,7 +375,8 @@ void relay_private_notice(struct Client*
+     return;
+   if ((!IsChannelService(acptr) && 
+        check_target_limit(sptr, acptr, cli_name(acptr), 0)) ||
+-      is_silenced(sptr, acptr))
++      is_silenced(sptr, acptr) ||
++      MuteLookup(sptr))
+     return;
+   /*
+    * deliver the message
+@@ -457,6 +460,10 @@ void relay_masked_message(struct Client*
+   assert(0 != sptr);
+   assert(0 != mask);
+   assert(0 != text);
++
++  if (MuteLookup(sptr))
++    return;
++
+   /*
+    * look for the last '.' in mask and scan forward
+    */
+@@ -499,6 +506,10 @@ void relay_masked_notice(struct Client* 
+   assert(0 != sptr);
+   assert(0 != mask);
+   assert(0 != text);
++
++  if (MuteLookup(sptr))
++    return;
++
+   /*
+    * look for the last '.' in mask and scan forward
+    */
+diff -Nurp ircu2.10.12.13-rc2/ircd/m_account.c ircu2.10.12.13-rc2-fakehost-mute/ircd/m_account.c
+--- ircu2.10.12.13-rc2/ircd/m_account.c	2004-12-10 23:14:07.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/m_account.c	2010-05-25 12:19:56.000000000 -0500
+@@ -106,6 +106,7 @@ int ms_account(struct Client* cptr, stru
+ 	       char* parv[])
+ {
+   struct Client *acptr;
++  int hidden;
+ 
+   if (parc < 3)
+     return need_more_params(sptr, "ACCOUNT");
+@@ -135,9 +136,12 @@ int ms_account(struct Client* cptr, stru
+     Debug((DEBUG_DEBUG, "Received timestamped account: account \"%s\", "
+            "timestamp %Tu", parv[2], cli_user(acptr)->acc_create));
+   }
+-
++  
++  hidden = HasHiddenHost(acptr);
++  SetAccount(acptr);
+   ircd_strncpy(cli_user(acptr)->account, parv[2], ACCOUNTLEN);
+-  hide_hostmask(acptr, FLAG_ACCOUNT);
++  if (!hidden)
++    hide_hostmask(acptr);
+ 
+   sendcmdto_serv_butone(sptr, CMD_ACCOUNT, cptr,
+                         cli_user(acptr)->acc_create ? "%C %s %Tu" : "%C %s",
+diff -Nurp ircu2.10.12.13-rc2/ircd/m_fakehost.c ircu2.10.12.13-rc2-fakehost-mute/ircd/m_fakehost.c
+--- ircu2.10.12.13-rc2/ircd/m_fakehost.c	1969-12-31 18:00:00.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/m_fakehost.c	2010-05-25 12:19:56.000000000 -0500
+@@ -0,0 +1,160 @@
++/*
++ * IRC - Internet Relay Chat, ircd/m_fakehost.c
++ * Copyright (C) 2004 Zoot <zoot@gamesurge.net>
++ *
++ * See file AUTHORS in IRC package for additional names of
++ * the programmers.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 1, or (at your option)
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ *
++ * $Id$
++ */
++
++/*
++ * m_functions execute protocol messages on this server:
++ *
++ *    cptr    is always NON-NULL, pointing to a *LOCAL* client
++ *            structure (with an open socket connected!). This
++ *            identifies the physical socket where the message
++ *            originated (or which caused the m_function to be
++ *            executed--some m_functions may call others...).
++ *
++ *    sptr    is the source of the message, defined by the
++ *            prefix part of the message if present. If not
++ *            or prefix not found, then sptr==cptr.
++ *
++ *            (!IsServer(cptr)) => (cptr == sptr), because
++ *            prefixes are taken *only* from servers...
++ *
++ *            (IsServer(cptr))
++ *                    (sptr == cptr) => the message didn't
++ *                    have the prefix.
++ *
++ *                    (sptr != cptr && IsServer(sptr) means
++ *                    the prefix specified servername. (?)
++ *
++ *                    (sptr != cptr && !IsServer(sptr) means
++ *                    that message originated from a remote
++ *                    user (not local).
++ *
++ *            combining
++ *
++ *            (!IsServer(sptr)) means that, sptr can safely
++ *            taken as defining the target structure of the
++ *            message in this server.
++ *
++ *    *Always* true (if 'parse' and others are working correct):
++ *
++ *    1)      sptr->from == cptr  (note: cptr->from == cptr)
++ *
++ *    2)      MyConnect(sptr) <=> sptr == cptr (e.g. sptr
++ *            *cannot* be a local connection, unless it's
++ *            actually cptr!). [MyConnect(x) should probably
++ *            be defined as (x == x->from) --msa ]
++ *
++ *    parc    number of variable parameter strings (if zero,
++ *            parv is allowed to be NULL)
++ *
++ *    parv    a NULL terminated list of parameter pointers,
++ *
++ *                    parv[0], sender (prefix string), if not present
++ *                            this points to an empty string.
++ *                    parv[1]...parv[parc-1]
++ *                            pointers to additional parameters
++ *                    parv[parc] == NULL, *always*
++ *
++ *            note:   it is guaranteed that parv[0]..parv[parc-1] are all
++ *                    non-NULL pointers.
++ */
++#include "config.h"
++
++#include "client.h"
++#include "hash.h"
++#include "ircd.h"
++#include "ircd_reply.h"
++#include "ircd_string.h"
++#include "msg.h"
++#include "numeric.h"
++#include "numnicks.h"
++#include "s_conf.h"
++#include "s_user.h"
++#include "send.h"
++#include <assert.h>
++
++/*
++ * m_fakehost - fakehost user message handler
++ *
++ * parv[0] = sender prefix
++ * parv[1] = new fake host
++ */
++int m_fakehost(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
++{
++  if (!HasPriv(sptr, PRIV_SET_FAKEHOST))
++    return send_reply(sptr, ERR_NOPRIVILEGES);
++
++  if (parc < 2)
++    return need_more_params(sptr, "FAKEHOST");
++
++  /* Ignore the assignment if it changes nothing */
++  if (HasFakeHost(cptr) &&
++      ircd_strcmp(cli_user(cptr)->fakehost, parv[1]) == 0)
++  {
++    return 0;
++  }
++
++  /* Assign and propagate the fakehost */
++  SetFakeHost(cptr);
++  ircd_strncpy(cli_user(cptr)->fakehost, parv[1], HOSTLEN);
++  hide_hostmask(cptr);
++
++  sendcmdto_serv_butone(sptr, CMD_FAKEHOST, cptr, "%C %s", sptr,
++                        cli_user(cptr)->fakehost);
++  return 0;
++}
++
++/*
++ * ms_fakehost - fakehost server message handler
++ *
++ * parv[0] = sender prefix
++ * parv[1] = target user numeric
++ * parv[2] = target user's new fake host
++ */
++int ms_fakehost(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
++{
++  struct Client *target;
++
++  if (parc < 3)
++    return need_more_params(sptr, "FAKEHOST");
++
++  /* Locate our target user; ignore the message if we can't */
++  if(!(target = findNUser(parv[1])))
++    return 0;
++
++  /* Ignore the assignment if it changes nothing */
++  if (HasFakeHost(target) &&
++      ircd_strcmp(cli_user(target)->fakehost, parv[2]) == 0)
++  {
++    return 0;
++  }
++
++  /* Assign and propagate the fakehost */
++  SetFakeHost(target);
++  ircd_strncpy(cli_user(target)->fakehost, parv[2], HOSTLEN);
++  hide_hostmask(target);
++
++  sendcmdto_serv_butone(sptr, CMD_FAKEHOST, cptr, "%C %s", target,
++                        cli_user(target)->fakehost);
++  return 0;
++}
+diff -Nurp ircu2.10.12.13-rc2/ircd/m_mute.c ircu2.10.12.13-rc2-fakehost-mute/ircd/m_mute.c
+--- ircu2.10.12.13-rc2/ircd/m_mute.c	1969-12-31 18:00:00.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/m_mute.c	2010-05-25 12:19:39.000000000 -0500
+@@ -0,0 +1,652 @@
++/*
++ * IRC - Internet Relay Chat, ircd/m_mute.c
++ * Copyright (C) 1990 Jarkko Oikarinen and
++ *                    University of Oulu, Computing Center
++ *
++ * See file AUTHORS in IRC package for additional names of
++ * the programmers.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 1, or (at your option)
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ *
++ * $Id: m_mute.c 1917 2009-07-06 02:02:31Z entrope $
++ */
++
++/*
++ * m_functions execute protocol messages on this server:
++ *
++ *    cptr    is always NON-NULL, pointing to a *LOCAL* client
++ *            structure (with an open socket connected!). This
++ *            identifies the physical socket where the message
++ *            originated (or which caused the m_function to be
++ *            executed--some m_functions may call others...).
++ *
++ *    sptr    is the source of the message, defined by the
++ *            prefix part of the message if present. If not
++ *            or prefix not found, then sptr==cptr.
++ *
++ *            (!IsServer(cptr)) => (cptr == sptr), because
++ *            prefixes are taken *only* from servers...
++ *
++ *            (IsServer(cptr))
++ *                    (sptr == cptr) => the message didn't
++ *                    have the prefix.
++ *
++ *                    (sptr != cptr && IsServer(sptr) means
++ *                    the prefix specified servername. (?)
++ *
++ *                    (sptr != cptr && !IsServer(sptr) means
++ *                    that message originated from a remote
++ *                    user (not local).
++ *
++ *            combining
++ *
++ *            (!IsServer(sptr)) means that, sptr can safely
++ *            taken as defining the target structure of the
++ *            message in this server.
++ *
++ *    *Always* true (if 'parse' and others are working correct):
++ *
++ *    1)      sptr->from == cptr  (note: cptr->from == cptr)
++ *
++ *    2)      MyConnect(sptr) <=> sptr == cptr (e.g. sptr
++ *            *cannot* be a local connection, unless it's
++ *            actually cptr!). [MyConnect(x) should probably
++ *            be defined as (x == x->from) --msa ]
++ *
++ *    parc    number of variable parameter strings (if zero,
++ *            parv is allowed to be NULL)
++ *
++ *    parv    a NULL terminated list of parameter pointers,
++ *
++ *                    parv[0], sender (prefix string), if not present
++ *                            this points to an empty string.
++ *                    parv[1]...parv[parc-1]
++ *                            pointers to additional parameters
++ *                    parv[parc] == NULL, *always*
++ *
++ *            note:   it is guaranteed that parv[0]..parv[parc-1] are all
++ *                    non-NULL pointers.
++ */
++#include "config.h"
++
++#include "client.h"
++#include "mute.h"
++#include "hash.h"
++#include "ircd.h"
++#include "ircd_features.h"
++#include "ircd_log.h"
++#include "ircd_reply.h"
++#include "ircd_string.h"
++#include "match.h"
++#include "msg.h"
++#include "numeric.h"
++#include "numnicks.h"
++#include "s_conf.h"
++#include "s_debug.h"
++#include "s_misc.h"
++#include "send.h"
++
++/* #include <assert.h> -- Now using assert in ircd_log.h */
++#include <stdlib.h>
++#include <string.h>
++
++#define PASTWATCH	157680000	/* number of seconds in 5 years */
++
++/*
++ * If the expiration value, interpreted as an absolute timestamp, is
++ * more recent than 5 years in the past, we interpret it as an
++ * absolute timestamp; otherwise, we assume it's relative and convert
++ * it to an absolute timestamp.  Either way, the output of this macro
++ * is an absolute timestamp--not guaranteed to be a *valid* timestamp,
++ * but you can't have everything in a macro ;)
++ */
++#define abs_expire(exp)							\
++  ((exp) >= CurrentTime - PASTWATCH ? (exp) : (exp) + CurrentTime)
++
++/*
++ * ms_mute - server message handler
++ *
++ * parv[0] = Sender prefix
++ * parv[1] = Target: server numeric
++ * parv[2] = (+|-)<mute mask>
++ *
++ * For other parameters, see doc/readme.mute.
++ */
++int
++ms_mute(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
++{
++  struct Client *acptr = 0;
++  struct Mute *amute = 0;
++  unsigned int flags = 0;
++  enum MuteAction action = MUTE_MODIFY;
++  time_t expire = 0, lastmod = 0, lifetime = 0;
++  char *mask = parv[2], *target = parv[1], *reason = "No reason", *tmp = 0;
++
++  if (parc < 3)
++    return need_more_params(sptr, "MUTE");
++
++  if (IsServer(sptr))
++    flags |= MUTE_FORCE;
++
++  if (*mask == '!') {
++    mask++;
++    flags |= MUTE_OPERFORCE; /* assume oper had WIDE_MUTE */
++  }
++
++  switch (*mask) { /* handle +, -, <, and > */
++  case '+': /* activate the mute */
++    action = MUTE_ACTIVATE;
++    mask++;
++    break;
++
++  case '-': /* deactivate the mute */
++    action = MUTE_DEACTIVATE;
++    mask++;
++    break;
++
++  case '>': /* locally activate the mute */
++    action = MUTE_LOCAL_ACTIVATE;
++    mask++;
++    break;
++
++  case '<': /* locally deactivate the mute */
++    action = MUTE_LOCAL_DEACTIVATE;
++    mask++;
++    break;
++  }
++
++  /* Now, let's figure out if it's a local or global mute */
++  if (action == MUTE_LOCAL_ACTIVATE || action == MUTE_LOCAL_DEACTIVATE ||
++      (target[0] == '*' && target[1] == '\0'))
++    flags |= MUTE_GLOBAL;
++  else
++    flags |= MUTE_LOCAL;
++
++  /* now figure out if we need to resolve a server */
++  if ((action == MUTE_LOCAL_ACTIVATE || action == MUTE_LOCAL_DEACTIVATE ||
++       (flags & MUTE_LOCAL)) && !(acptr = FindNServer(target)))
++    return 0; /* no such server, jump out */
++
++  /* If it's a local activate/deactivate and server isn't me, propagate it */
++  if ((action == MUTE_LOCAL_ACTIVATE || action == MUTE_LOCAL_DEACTIVATE) &&
++      !IsMe(acptr)) {
++    Debug((DEBUG_DEBUG, "I am forwarding a local change to a global mute "
++	   "to a remote server; target %s, mask %s, operforce %s, action %c",
++	   target, mask, flags & MUTE_OPERFORCE ? "YES" : "NO",
++	   action == MUTE_LOCAL_ACTIVATE ? '>' : '<'));
++
++    sendcmdto_one(sptr, CMD_MUTE, acptr, "%C %s%c%s", acptr,
++		  flags & MUTE_OPERFORCE ? "!" : "",
++		  action == MUTE_LOCAL_ACTIVATE ? '>' : '<', mask);
++
++    return 0; /* all done */
++  }
++
++  /* Next, try to find the mute... */
++  if ((flags & MUTE_GLOBAL) || IsMe(acptr)) /* don't bother if it's not me! */
++    amute = mute_find(mask, flags | MUTE_ANY | MUTE_EXACT);
++
++  /* We now have all the pieces to tell us what we've got; let's put
++   * it all together and convert the rest of the arguments.
++   */
++
++  /* Handle the local mutes first... */
++  if (flags & MUTE_LOCAL) {
++    assert(acptr);
++
++    /* normalize the action, first */
++    if (action == MUTE_LOCAL_ACTIVATE || action == MUTE_MODIFY)
++      action = MUTE_ACTIVATE;
++    else if (action == MUTE_LOCAL_DEACTIVATE)
++      action = MUTE_DEACTIVATE;
++
++    if (action == MUTE_ACTIVATE) { /* get expiration and reason */
++      if (parc < 5) /* check parameter count... */
++	return need_more_params(sptr, "MUTE");
++
++      expire = atoi(parv[3]); /* get expiration... */
++      expire = abs_expire(expire); /* convert to absolute... */
++      reason = parv[parc - 1]; /* and reason */
++
++      if (IsMe(acptr)) {
++	if (amute) /* mute already exists, so let's ignore it... */
++	  return 0;
++
++	/* OK, create the local mute */
++	Debug((DEBUG_DEBUG, "I am creating a local mute here; target %s, "
++	       "mask %s, operforce %s, action %s, expire %Tu, reason: %s",
++	       target, mask, flags & MUTE_OPERFORCE ? "YES" : "NO",
++	       action == MUTE_ACTIVATE ? "+" : "-", expire, reason));
++
++	return mute_add(cptr, sptr, mask, reason, expire, lastmod,
++			 lifetime, flags | MUTE_ACTIVE);
++      }
++    } else if (IsMe(acptr)) { /* destroying a local mute */
++      if (!amute) /* mute doesn't exist, so let's complain... */
++	return send_reply(sptr, ERR_NOSUCHMUTE, mask);
++
++      /* Let's now destroy the mute */;
++      Debug((DEBUG_DEBUG, "I am destroying a local mute here; target %s, "
++	     "mask %s, operforce %s, action %s", target, mask,
++	     flags & MUTE_OPERFORCE ? "YES" : "NO",
++	     action == MUTE_ACTIVATE ? "+" : "-"));
++
++      return mute_destroy(cptr, sptr, amute);
++    }
++
++    /* OK, we've converted arguments; if it's not for us, forward */
++    /* UPDATE NOTE: Once all servers are updated to u2.10.12.11, the
++     * format string in this sendcmdto_one() may be updated to omit
++     * <lastmod> for MUTE_ACTIVATE and to omit <expire>, <lastmod>,
++     * and <reason> for MUTE_DEACTIVATE.
++     */
++    assert(!IsMe(acptr));
++
++    Debug((DEBUG_DEBUG, "I am forwarding a local mute to a remote server; "
++	   "target %s, mask %s, operforce %s, action %c, expire %Tu, "
++	   "lastmod %Tu, reason: %s", target, mask,
++	   flags & MUTE_OPERFORCE ? "YES" : "NO",
++	   action == MUTE_ACTIVATE ? '+' :  '-', expire, CurrentTime,
++	   reason));
++
++    sendcmdto_one(sptr, CMD_MUTE, acptr, "%C %s%c%s %Tu %Tu :%s",
++		  acptr, flags & MUTE_OPERFORCE ? "!" : "",
++		  action == MUTE_ACTIVATE ? '+' : '-', mask,
++		  expire - CurrentTime, CurrentTime, reason);
++
++    return 0; /* all done */
++  }
++
++  /* can't modify a mute that doesn't exist, so remap to activate */
++  if (!amute && action == MUTE_MODIFY)
++    action = MUTE_ACTIVATE;
++
++  /* OK, let's figure out what other parameters we may have... */
++  switch (action) {
++  case MUTE_LOCAL_ACTIVATE: /* locally activating a mute */
++  case MUTE_LOCAL_DEACTIVATE: /* locally deactivating a mute */
++    if (!amute) /* no mute to locally activate or deactivate? */
++      return send_reply(sptr, ERR_NOSUCHMUTE, mask);
++    lastmod = amute->mt_lastmod;
++    break; /* no additional parameters to manipulate */
++
++  case MUTE_ACTIVATE: /* activating a mute */
++  case MUTE_DEACTIVATE: /* deactivating a mute */
++    /* in either of these cases, we have at least a lastmod parameter */
++    if (parc < 4)
++      return need_more_params(sptr, "MUTE");
++    else if (parc == 4) /* lastmod only form... */
++      lastmod = atoi(parv[3]);
++    /*FALLTHROUGH*/
++  case MUTE_MODIFY: /* modifying a mute */
++    /* convert expire and lastmod, look for lifetime and reason */
++    if (parc > 4) { /* protect against fall-through from 4-param form */
++      expire = atoi(parv[3]); /* convert expiration and lastmod */
++      expire = abs_expire(expire);
++      lastmod = atoi(parv[4]);
++
++      flags |= MUTE_EXPIRE; /* we have an expiration time update */
++
++      if (parc > 6) { /* no question, have a lifetime and reason */
++	lifetime = atoi(parv[5]);
++	reason = parv[parc - 1];
++
++	flags |= MUTE_LIFETIME | MUTE_REASON;
++      } else if (parc == 6) { /* either a lifetime or a reason */
++	if (!amute || /* mute creation, has to be the reason */
++	    /* trial-convert as lifetime, and if it doesn't fully convert,
++	     * it must be the reason */
++	    (!(lifetime = strtoul(parv[5], &tmp, 10)) && !*tmp)) {
++	  lifetime = 0;
++	  reason = parv[5];
++
++	  flags |= MUTE_REASON; /* have a reason update */
++	} else if (lifetime)
++	  flags |= MUTE_LIFETIME; /* have a lifetime update */
++      }
++    }
++  }
++
++  if (!lastmod) /* must have a lastmod parameter by now */
++    return need_more_params(sptr, "MUTE");
++
++  Debug((DEBUG_DEBUG, "I have a global mute I am acting upon now; "
++	 "target %s, mask %s, operforce %s, action %s, expire %Tu, "
++	 "lastmod %Tu, lifetime %Tu, reason: %s; mute %s!  (fields "
++	 "present: %s %s %s)", target, mask,
++	 flags & MUTE_OPERFORCE ? "YES" : "NO",
++	 action == MUTE_ACTIVATE ? "+" :
++	 (action == MUTE_DEACTIVATE ? "-" :
++	  (action == MUTE_LOCAL_ACTIVATE ? ">" :
++	   (action == MUTE_LOCAL_DEACTIVATE ? "<" : "(MODIFY)"))),
++	 expire, lastmod, lifetime, reason,
++	 amute ? "EXISTS" : "does not exist",
++	 flags & MUTE_EXPIRE ? "expire" : "",
++	 flags & MUTE_LIFETIME ? "lifetime" : "",
++	 flags & MUTE_REASON ? "reason" : ""));
++
++  /* OK, at this point, we have converted all available parameters.
++   * Let's actually do the action!
++   */
++  if (amute)
++    return mute_modify(cptr, sptr, amute, action, reason, expire,
++			lastmod, lifetime, flags);
++
++  assert(action != MUTE_LOCAL_ACTIVATE);
++  assert(action != MUTE_LOCAL_DEACTIVATE);
++  assert(action != MUTE_MODIFY);
++
++  if (!expire) { /* Cannot *add* a mute we don't have, but try hard */
++    Debug((DEBUG_DEBUG, "Propagating mute %s for mute we don't have",
++	   action == MUTE_ACTIVATE ? "activation" : "deactivation"));
++
++    /* propagate the mute, even though we don't have it */
++    sendcmdto_serv_butone(sptr, CMD_MUTE, cptr, "* %c%s %Tu",
++			  action == MUTE_ACTIVATE ? '+' : '-',
++			  mask, lastmod);
++
++    return 0;
++  }
++
++  return mute_add(cptr, sptr, mask, reason, expire, lastmod, lifetime,
++		   flags | ((action == MUTE_ACTIVATE) ? MUTE_ACTIVE : 0));
++}
++
++/*
++ * mo_mute - oper message handler
++ *
++ * parv[0] = Sender prefix
++ * parv[1] = [[+|-]<mute mask>]
++ *
++ * For other parameters, see doc/readme.mute.
++ */
++int
++mo_mute(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
++{
++  struct Client *acptr = 0;
++  struct Mute *amute = 0;
++  unsigned int flags = 0;
++  enum MuteAction action = MUTE_MODIFY;
++  time_t expire = 0;
++  char *mask = parv[1], *target = 0, *reason = 0, *end;
++
++  if (parc < 2)
++    return mute_list(sptr, 0);
++
++  if (*mask == '!') {
++    mask++;
++
++    if (HasPriv(sptr, PRIV_WIDE_MUTE))
++      flags |= MUTE_OPERFORCE;
++  }
++
++  switch (*mask) { /* handle +, -, <, and > */
++  case '+': /* activate the mute */
++    action = MUTE_ACTIVATE;
++    mask++;
++    break;
++
++  case '-': /* deactivate the mute */
++    action = MUTE_DEACTIVATE;
++    mask++;
++    break;
++
++  case '>': /* locally activate the mute */
++    action = MUTE_LOCAL_ACTIVATE;
++    mask++;
++    break;
++
++  case '<': /* locally deactivate the mute */
++    action = MUTE_LOCAL_DEACTIVATE;
++    mask++;
++    break;
++  }
++
++  /* OK, let's figure out the parameters... */
++  switch (action) {
++  case MUTE_MODIFY: /* no specific action on the mute... */
++    if (parc == 2) /* user wants a listing of a specific mute */
++      return mute_list(sptr, mask);
++    else if (parc < 4) /* must have target and expire, minimum */
++      return need_more_params(sptr, "MUTE");
++
++    target = parv[2]; /* get the target... */
++    expire = strtol(parv[3], &end, 10) + CurrentTime; /* and the expiration */
++    if (*end != '\0')
++      return send_reply(sptr, SND_EXPLICIT | ERR_BADEXPIRE, "%s :Bad expire time", parv[3]);
++
++    flags |= MUTE_EXPIRE; /* remember that we got an expire time */
++
++    if (parc > 4) { /* also got a reason... */
++      reason = parv[parc - 1];
++      flags |= MUTE_REASON;
++    }
++
++    /* target is not global, interpolate action and require reason */
++    if (target[0] != '*' || target[1] != '\0') {
++      if (!reason) /* have to have a reason for this */
++	return need_more_params(sptr, "MUTE");
++
++      action = MUTE_ACTIVATE;
++    }
++    break;
++
++  case MUTE_LOCAL_ACTIVATE: /* locally activate a mute */
++  case MUTE_LOCAL_DEACTIVATE: /* locally deactivate a mute */
++    if (parc > 2) { /* if target is available, pick it */
++      target = parv[2];
++      if (target[0] == '*' && target[1] == '\0')
++        return send_reply(sptr, ERR_NOSUCHSERVER, target);
++    }
++    break;
++
++  case MUTE_ACTIVATE: /* activating/adding a mute */
++  case MUTE_DEACTIVATE: /* deactivating/removing a mute */
++    if (parc < 3)
++      return need_more_params(sptr, "MUTE");
++
++    if (parc > 3) {
++      /* get expiration and target */
++      reason = parv[parc - 1];
++      expire = strtol(parv[parc - 2], &end, 10) + CurrentTime;
++      if (*end != '\0')
++        return send_reply(sptr, SND_EXPLICIT | ERR_BADEXPIRE, "%s :Bad expire time", parv[parc - 2]);
++
++      flags |= MUTE_EXPIRE | MUTE_REASON; /* remember that we got 'em */
++
++      if (parc > 4) /* also have a target! */
++	target = parv[2];
++    } else {
++      target = parv[2]; /* target has to be present, and has to be '*' */
++
++      if (target[0] != '*' || target[1] != '\0')
++	return need_more_params(sptr, "MUTE");
++    }
++    break;
++  }
++
++  /* Now let's figure out which is the target server */
++  if (!target) /* no target, has to be me... */
++    acptr = &me;
++  /* if it's not '*', look up the server */
++  else if ((target[0] != '*' || target[1] != '\0') &&
++	   !(acptr = find_match_server(target)))
++    return send_reply(sptr, ERR_NOSUCHSERVER, target);
++
++  /* Now, is the mute local or global? */
++  if (action == MUTE_LOCAL_ACTIVATE || action == MUTE_LOCAL_DEACTIVATE ||
++      !acptr)
++    flags |= MUTE_GLOBAL;
++  else /* it's some form of local mute */
++    flags |= MUTE_LOCAL;
++
++  /* If it's a local activate/deactivate and server isn't me, propagate it */
++  if ((action == MUTE_LOCAL_ACTIVATE || action == MUTE_LOCAL_DEACTIVATE) &&
++      !IsMe(acptr)) {
++    /* check for permissions... */
++    if (!feature_bool(FEAT_CONFIG_OPERCMDS))
++      return send_reply(sptr, ERR_DISABLED, "MUTE");
++    else if (!HasPriv(sptr, PRIV_MUTE))
++      return send_reply(sptr, ERR_NOPRIVILEGES);
++
++    Debug((DEBUG_DEBUG, "I am forwarding a local change to a global mute "
++	   "to a remote server; target %s, mask %s, operforce %s, action %c",
++	   cli_name(acptr), mask, flags & MUTE_OPERFORCE ? "YES" : "NO",
++	   action == MUTE_LOCAL_ACTIVATE ? '>' : '<'));
++
++    sendcmdto_one(sptr, CMD_MUTE, acptr, "%C %s%c%s", acptr,
++                  flags & MUTE_OPERFORCE ? "!" : "",
++                  action == MUTE_LOCAL_ACTIVATE ? '>' : '<', mask);
++
++    return 0; /* all done */
++  }
++
++  /* Next, try to find the mute... */
++  if ((flags & MUTE_GLOBAL) || IsMe(acptr)) /* don't bother if it's not me! */
++    amute = mute_find(mask, flags | MUTE_ANY | MUTE_EXACT);
++
++  /* We now have all the pieces to tell us what we've got; let's put
++   * it all together and convert the rest of the arguments.
++   */
++
++  /* Handle the local mutes first... */
++  if (flags & MUTE_LOCAL) {
++    assert(acptr);
++
++    /* normalize the action, first */
++    if (action == MUTE_LOCAL_ACTIVATE || action == MUTE_MODIFY)
++      action = MUTE_ACTIVATE;
++    else if (action == MUTE_LOCAL_DEACTIVATE)
++      action = MUTE_DEACTIVATE;
++
++    /* If it's not for us, forward */
++    /* UPDATE NOTE: Once all servers are updated to u2.10.12.11, the
++     * format string in this sendcmdto_one() may be updated to omit
++     * <lastmod> for MUTE_ACTIVATE and to omit <expire>, <lastmod>,
++     * and <reason> for MUTE_DEACTIVATE.
++     */
++
++    if (!IsMe(acptr)) {
++      /* check for permissions... */
++      if (!feature_bool(FEAT_CONFIG_OPERCMDS))
++	return send_reply(sptr, ERR_DISABLED, "MUTE");
++      else if (!HasPriv(sptr, PRIV_MUTE))
++	return send_reply(sptr, ERR_NOPRIVILEGES);
++
++      Debug((DEBUG_DEBUG, "I am forwarding a local mute to a remote "
++	     "server; target %s, mask %s, operforce %s, action %c, "
++	     "expire %Tu, reason %s", target, mask,
++	     flags & MUTE_OPERFORCE ? "YES" : "NO",
++	     action == MUTE_ACTIVATE ? '+' : '-', expire, reason));
++
++      sendcmdto_one(sptr, CMD_MUTE, acptr, "%C %s%c%s %Tu %Tu :%s",
++		    acptr, flags & MUTE_OPERFORCE ? "!" : "",
++		    action == MUTE_ACTIVATE ? '+' : '-', mask,
++		    expire - CurrentTime, CurrentTime, reason);
++
++      return 0; /* all done */
++    }
++
++    /* check local mute permissions... */
++    if (!HasPriv(sptr, PRIV_LOCAL_MUTE))
++      return send_reply(sptr, ERR_NOPRIVILEGES);
++
++    /* let's handle activation... */
++    if (action == MUTE_ACTIVATE) {
++      if (amute) /* mute already exists, so let's ignore it... */
++	return 0;
++
++      /* OK, create the local mute */
++      Debug((DEBUG_DEBUG, "I am creating a local mute here; target %s, "
++	     "mask %s, operforce %s, action  %s, expire %Tu, reason: %s",
++	     target, mask, flags & MUTE_OPERFORCE ? "YES" : "NO",
++	     action == MUTE_ACTIVATE ? "+" : "-", expire, reason));
++
++      return mute_add(cptr, sptr, mask, reason, expire, 0, 0,
++		       flags | MUTE_ACTIVE);
++    } else { /* OK, it's a deactivation/destruction */
++      if (!amute) /* mute doesn't exist, so let's complain... */
++	return send_reply(sptr, ERR_NOSUCHMUTE, mask);
++
++      /* Let's now destroy the mute */
++      Debug((DEBUG_DEBUG, "I am destroying a local mute here; target %s, "
++	     "mask %s, operforce %s, action %s", target, mask,
++	     flags & MUTE_OPERFORCE ? "YES" : "NO",
++	     action == MUTE_ACTIVATE ? "+" : "-"));
++
++      return mute_destroy(cptr, sptr, amute);
++    }
++  }
++
++  /* can't modify a mute that doesn't exist...
++   * (and if we are creating a new one, we need a reason and expiration)
++   */
++  if (!amute &&
++      (action == MUTE_MODIFY || action == MUTE_LOCAL_ACTIVATE ||
++       action == MUTE_LOCAL_DEACTIVATE || !reason || !expire))
++    return send_reply(sptr, ERR_NOSUCHMUTE, mask);
++
++  /* check for mute permissions... */
++  if (action == MUTE_LOCAL_ACTIVATE || action == MUTE_LOCAL_DEACTIVATE) {
++    /* only need local privileges for locally-limited status changes */
++    if (!HasPriv(sptr, PRIV_LOCAL_MUTE))
++      return send_reply(sptr, ERR_NOPRIVILEGES);
++  } else { /* global privileges required */
++    if (!feature_bool(FEAT_CONFIG_OPERCMDS))
++      return send_reply(sptr, ERR_DISABLED, "MUTE");
++    else if (!HasPriv(sptr, PRIV_MUTE))
++      return send_reply(sptr, ERR_NOPRIVILEGES);
++  }
++
++  Debug((DEBUG_DEBUG, "I have a global mute I am acting upon now; "
++	 "target %s, mask %s, operforce %s, action %s, expire %Tu, "
++	 "reason: %s; mute %s!  (fields present: %s %s)", target, 
++	 mask, flags & MUTE_OPERFORCE ? "YES" : "NO",
++	 action == MUTE_ACTIVATE ? "+" :
++	 (action == MUTE_DEACTIVATE ? "-" :
++	  (action == MUTE_LOCAL_ACTIVATE ? ">" :
++	   (action == MUTE_LOCAL_DEACTIVATE ? "<" : "(MODIFY)"))),
++	 expire, reason, amute ? "EXISTS" : "does not exist",
++	 flags & MUTE_EXPIRE ? "expire" : "",
++	 flags & MUTE_REASON ? "reason" : ""));
++
++  if (amute) /* modifying an existing mute */
++    return mute_modify(cptr, sptr, amute, action, reason, expire,
++			CurrentTime, 0, flags);
++
++  assert(action != MUTE_LOCAL_ACTIVATE);
++  assert(action != MUTE_LOCAL_DEACTIVATE);
++  assert(action != MUTE_MODIFY);
++
++  /* create a new mute */
++  return mute_add(cptr, sptr, mask, reason, expire, CurrentTime, 0,
++		   flags | ((action == MUTE_ACTIVATE) ? MUTE_ACTIVE : 0));
++}
++
++/*
++ * m_mute - user message handler
++ *
++ * parv[0] = Sender prefix
++ * parv[1] = [<server name>]
++ *
++ */
++int
++m_mute(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
++{
++  if (parc < 2)
++    return send_reply(sptr, ERR_NOSUCHMUTE, "");
++
++  return mute_list(sptr, parv[1]);
++}
+diff -Nurp ircu2.10.12.13-rc2/ircd/m_quit.c ircu2.10.12.13-rc2-fakehost-mute/ircd/m_quit.c
+--- ircu2.10.12.13-rc2/ircd/m_quit.c	2004-12-10 23:14:07.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/m_quit.c	2010-05-25 12:19:39.000000000 -0500
+@@ -84,8 +84,10 @@
+ #include "channel.h"
+ #include "client.h"
+ #include "ircd.h"
++#include "ircd_features.h"
+ #include "ircd_log.h"
+ #include "ircd_string.h"
++#include "mute.h"
+ #include "struct.h"
+ #include "s_misc.h"
+ #include "ircd_reply.h"
+@@ -112,7 +114,7 @@ int m_quit(struct Client* cptr, struct C
+         return exit_client(cptr, sptr, sptr, "Signed off");
+     }
+   }
+-  if (parc > 1 && !BadPtr(parv[parc - 1]))
++  if (parc > 1 && !BadPtr(parv[parc - 1]) && !MuteLookup(sptr))
+     return exit_client_msg(cptr, sptr, sptr, "Quit: %s", parv[parc - 1]);
+   else
+     return exit_client(cptr, sptr, sptr, "Quit");
+diff -Nurp ircu2.10.12.13-rc2/ircd/mute.c ircu2.10.12.13-rc2-fakehost-mute/ircd/mute.c
+--- ircu2.10.12.13-rc2/ircd/mute.c	1969-12-31 18:00:00.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/mute.c	2010-05-25 12:19:39.000000000 -0500
+@@ -0,0 +1,1119 @@
++/*
++ * IRC - Internet Relay Chat, ircd/mute.c
++ * Copyright (C) 1990 Jarkko Oikarinen and
++ *                    University of Oulu, Finland
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2, or (at your option)
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ */
++/** @file
++ * @brief Implementation of Mute manipulation functions.
++ * @version $Id: mute.c 1936 2010-01-07 02:55:33Z entrope $
++ */
++#include "config.h"
++
++#include "mute.h"
++#include "client.h"
++#include "ircd.h"
++#include "ircd_alloc.h"
++#include "ircd_features.h"
++#include "ircd_log.h"
++#include "ircd_reply.h"
++#include "ircd_snprintf.h"
++#include "ircd_string.h"
++#include "match.h"
++#include "numeric.h"
++#include "s_bsd.h"
++#include "s_debug.h"
++#include "s_misc.h"
++#include "s_stats.h"
++#include "send.h"
++#include "struct.h"
++#include "sys.h"
++#include "msg.h"
++#include "numnicks.h"
++#include "numeric.h"
++
++/* #include <assert.h> -- Now using assert in ircd_log.h */
++#include <string.h>
++#include <stdio.h>
++#include <stdlib.h>
++
++#define CHECK_APPROVED	   0	/**< Mask is acceptable */
++#define CHECK_OVERRIDABLE  1	/**< Mask is acceptable, but not by default */
++#define CHECK_REJECTED	   2	/**< Mask is totally unacceptable */
++
++#define MASK_WILD_0	0x01	/**< Wildcards in the last position */
++#define MASK_WILD_1	0x02	/**< Wildcards in the next-to-last position */
++
++#define MASK_WILD_MASK	0x03	/**< Mask out the positional wildcards */
++
++#define MASK_WILDS	0x10	/**< Mask contains wildcards */
++#define MASK_IP		0x20	/**< Mask is an IP address */
++#define MASK_HALT	0x40	/**< Finished processing mask */
++
++/** List of user mutes. */
++struct Mute* GlobalMuteList  = 0;
++
++/** Iterate through \a list of mutes.  Use this like a for loop,
++ * i.e., follow it with braces and use whatever you passed as \a mt
++ * as a single mute to be acted upon.
++ *
++ * @param[in] list List of mutes to iterate over.
++ * @param[in] mt Name of a struct Mute pointer variable that will be made to point to the mutes in sequence.
++ * @param[in] next Name of a scratch struct Mute pointer variable.
++ */
++/* There is some subtlety here with the boolean operators:
++ * (x || 1) is used to continue in a logical-and series even when !x.
++ * (x && 0) is used to continue in a logical-or series even when x.
++ */
++#define mtiter(list, mt, next)				\
++  /* Iterate through the mutes in the list */		\
++  for ((mt) = (list); (mt); (mt) = (next))		\
++    /* Figure out the next pointer in list... */	\
++    if ((((next) = (mt)->mt_next) || 1) &&		\
++	/* Then see if it's expired */			\
++	(mt)->mt_lifetime <= CurrentTime)		\
++      /* Record has expired, so free the mute */	\
++      mute_free((mt), 1);					\
++    /* See if we need to expire the mute */		\
++    else if ((((mt)->mt_expire > CurrentTime) ||        \
++	      (((mt)->mt_flags &= ~MUTE_ACTIVE) && 0) ||	\
++	      ((mt)->mt_state = MLOCAL_GLOBAL)) && 0)	\
++      ; /* empty statement */				\
++    else
++
++/** Find canonical user and host for a string.
++ * If \a userhost starts with '$', assign \a userhost to *user_p and NULL to *host_p.
++ * Otherwise, if \a userhost contains '@', assign the earlier part of it to *user_p and the rest to *host_p.
++ * Otherwise, assign \a def_user to *user_p and \a userhost to *host_p.
++ *
++ * @param[in] userhost Input string from user.
++ * @param[out] user_p Gets pointer to user (or realname) part of hostmask.
++ * @param[out] host_p Gets point to host part of hostmask (may be assigned NULL).
++ * @param[in] def_user Default value for user part.
++ */
++static void
++canon_userhost(char *userhost, char **user_p, char **host_p, char *def_user)
++{
++  char *tmp;
++
++  if (*userhost == '$') {
++    *user_p = userhost;
++    *host_p = NULL;
++    return;
++  }
++
++  if (!(tmp = strchr(userhost, '@'))) {
++    *user_p = def_user;
++    *host_p = userhost;
++  } else {
++    *user_p = userhost;
++    *(tmp++) = '\0';
++    *host_p = tmp;
++  }
++}
++
++/** Create a Mute structure.
++ * @param[in] user User part of mask.
++ * @param[in] host Host part of mask (NULL if not applicable).
++ * @param[in] reason Reason for mute.
++ * @param[in] expire Expiration timestamp.
++ * @param[in] lastmod Last modification timestamp.
++ * @param[in] flags Bitwise combination of MUTE_* bits.
++ * @return Newly allocated mute.
++ */
++static struct Mute *
++make_mute(char *user, char *host, char *reason, time_t expire, time_t lastmod,
++	   time_t lifetime, unsigned int flags)
++{
++  struct Mute *mute;
++
++  assert(0 != expire);
++
++  mute = (struct Mute *)MyMalloc(sizeof(struct Mute)); /* alloc memory */
++  assert(0 != mute);
++
++  DupString(mute->mt_reason, reason); /* initialize mute... */
++  mute->mt_expire = expire;
++  mute->mt_lifetime = lifetime;
++  mute->mt_lastmod = lastmod;
++  mute->mt_flags = flags & MUTE_MASK;
++  mute->mt_state = MLOCAL_GLOBAL; /* not locally modified */
++
++  DupString(mute->mt_user, user); /* remember them... */
++  if (*user != '$')
++    DupString(mute->mt_host, host);
++  else
++    mute->mt_host = NULL;
++
++  if (*user != '$' && ipmask_parse(host, &mute->mt_addr, &mute->mt_bits))
++    mute->mt_flags |= MUTE_IPMASK;
++
++  mute->mt_next = GlobalMuteList; /* then link it into list */
++  mute->mt_prev_p = &GlobalMuteList;
++  if (GlobalMuteList)
++    GlobalMuteList->mt_prev_p = &mute->mt_next;
++  GlobalMuteList = mute;
++
++  return mute;
++}
++
++/** Check local clients against a new mute.
++ * If the mute is inactive, return immediately.
++ * Otherwise, if any users match it, disconnect them.
++ * @param[in] cptr Peer connect that sent the mute.
++ * @param[in] sptr Client that originated the mute.
++ * @param[in] mute New mute to check.
++ * @return Zero, unless \a sptr muted himself, in which case CPTR_KILLED.
++ */
++static int
++do_mute(struct Client *cptr, struct Client *sptr, struct Mute *mute)
++{
++  struct Client *acptr;
++  int fd, retval = 0, tval;
++
++  if (feature_bool(FEAT_DISABLE_MUTES))
++    return 0; /* mutes are disabled */
++
++  for (fd = HighestFd; fd >= 0; --fd) {
++    /*
++     * get the users!
++     */
++    if ((acptr = LocalClientArray[fd])) {
++      if (!cli_user(acptr))
++	continue;
++
++      if (MuteIsRealName(mute)) { /* Realname Mute */
++	Debug((DEBUG_DEBUG,"Realname Mute: %s %s",(cli_info(acptr)),
++					mute->mt_user+2));
++        if (match(mute->mt_user+2, cli_info(acptr)) != 0)
++            continue;
++        Debug((DEBUG_DEBUG,"Matched!"));
++      } else { /* Host/IP mute */
++        if (cli_user(acptr)->username &&
++            match(mute->mt_user, (cli_user(acptr))->username) != 0)
++          continue;
++
++        if (MuteIsIpMask(mute)) {
++          if (!ipmask_check(&cli_ip(acptr), &mute->mt_addr, mute->mt_bits))
++            continue;
++        }
++        else {
++          if (match(mute->mt_host, cli_sockhost(acptr)) != 0)
++            continue;
++        }
++      }
++
++      /* no action necessary against client */
++
++      /* let the ops know about it */
++      sendto_opmask_butone(0, SNO_GLINE, "Mute %s for %s",
++                           MuteIsActive(mute) ? "active" : "inactive",
++                           get_client_name(acptr, SHOW_IP));
++    }
++  }
++  return retval;
++}
++
++/**
++ * Implements the mask checking applied to local mutes.
++ * Basically, host masks must have a minimum of two non-wild domain
++ * fields, and IP masks must have a minimum of 16 bits.  If the mask
++ * has even one wild-card, OVERRIDABLE is returned, assuming the other
++ * check doesn't fail.
++ * @param[in] mask mute mask to check.
++ * @return One of CHECK_REJECTED, CHECK_OVERRIDABLE, or CHECK_APPROVED.
++ */
++static int
++mute_checkmask(char *mask)
++{
++  unsigned int flags = MASK_IP;
++  unsigned int dots = 0;
++  unsigned int ipmask = 0;
++
++  for (; *mask; mask++) { /* go through given mask */
++    if (*mask == '.') { /* it's a separator; advance positional wilds */
++      flags = (flags & ~MASK_WILD_MASK) | ((flags << 1) & MASK_WILD_MASK);
++      dots++;
++
++      if ((flags & (MASK_IP | MASK_WILDS)) == MASK_IP)
++	ipmask += 8; /* It's an IP with no wilds, count bits */
++    } else if (*mask == '*' || *mask == '?')
++      flags |= MASK_WILD_0 | MASK_WILDS; /* found a wildcard */
++    else if (*mask == '/') { /* n.n.n.n/n notation; parse bit specifier */
++      ++mask;
++      ipmask = strtoul(mask, &mask, 10);
++
++      /* sanity-check to date */
++      if (*mask || (flags & (MASK_WILDS | MASK_IP)) != MASK_IP)
++	return CHECK_REJECTED;
++      if (!dots) {
++        if (ipmask > 128)
++          return CHECK_REJECTED;
++        if (ipmask < 128)
++          flags |= MASK_WILDS;
++      } else {
++        if (dots != 3 || ipmask > 32)
++          return CHECK_REJECTED;
++        if (ipmask < 32)
++	  flags |= MASK_WILDS;
++      }
++
++      flags |= MASK_HALT; /* Halt the ipmask calculation */
++      break; /* get out of the loop */
++    } else if (!IsIP6Char(*mask)) {
++      flags &= ~MASK_IP; /* not an IP anymore! */
++      ipmask = 0;
++    }
++  }
++
++  /* Sanity-check quads */
++  if (dots > 3 || (!(flags & MASK_WILDS) && dots < 3)) {
++    flags &= ~MASK_IP;
++    ipmask = 0;
++  }
++
++  /* update bit count if necessary */
++  if ((flags & (MASK_IP | MASK_WILDS | MASK_HALT)) == MASK_IP)
++    ipmask += 8;
++
++  /* Check to see that it's not too wide of a mask */
++  if (flags & MASK_WILDS &&
++      ((!(flags & MASK_IP) && (dots < 2 || flags & MASK_WILD_MASK)) ||
++       (flags & MASK_IP && ipmask < 16)))
++    return CHECK_REJECTED; /* to wide, reject */
++
++  /* Ok, it's approved; require override if it has wildcards, though */
++  return flags & MASK_WILDS ? CHECK_OVERRIDABLE : CHECK_APPROVED;
++}
++
++/** Forward a mute to other servers.
++ * @param[in] cptr Client that sent us the mute.
++ * @param[in] sptr Client that originated the mute.
++ * @param[in] mute mute to forward.
++ * @return Zero.
++ */
++static int
++mute_propagate(struct Client *cptr, struct Client *sptr, struct Mute *mute)
++{
++  if (MuteIsLocal(mute))
++    return 0;
++
++  assert(mute->mt_lastmod);
++
++  sendcmdto_serv_butone(sptr, CMD_MUTE, cptr, "* %c%s%s%s %Tu %Tu %Tu :%s",
++			MuteIsRemActive(mute) ? '+' : '-', mute->mt_user,
++			mute->mt_host ? "@" : "",
++			mute->mt_host ? mute->mt_host : "",
++			mute->mt_expire - CurrentTime, mute->mt_lastmod,
++			mute->mt_lifetime, mute->mt_reason);
++
++  return 0;
++}
++
++/** Count number of users who match \a mask.
++ * @param[in] mask user\@host or user\@ip mask to check.
++ * @param[in] flags Bitmask possibly containing the value MUTE_LOCAL, to limit searches to this server.
++ * @return Count of matching users.
++ */
++static int
++count_users(char *mask, int flags)
++{
++  struct irc_in_addr ipmask;
++  struct Client *acptr;
++  int count = 0;
++  int ipmask_valid;
++  char namebuf[USERLEN + HOSTLEN + 2];
++  char ipbuf[USERLEN + SOCKIPLEN + 2];
++  unsigned char ipmask_len;
++
++  ipmask_valid = ipmask_parse(mask, &ipmask, &ipmask_len);
++  for (acptr = GlobalClientList; acptr; acptr = cli_next(acptr)) {
++    if (!IsUser(acptr))
++      continue;
++    if ((flags & MUTE_LOCAL) && !MyConnect(acptr))
++      continue;
++
++    ircd_snprintf(0, namebuf, sizeof(namebuf), "%s@%s",
++		  cli_user(acptr)->username, cli_user(acptr)->host);
++    ircd_snprintf(0, ipbuf, sizeof(ipbuf), "%s@%s", cli_user(acptr)->username,
++		  ircd_ntoa(&cli_ip(acptr)));
++
++    if (!match(mask, namebuf)
++        || !match(mask, ipbuf)
++        || (ipmask_valid && ipmask_check(&cli_ip(acptr), &ipmask, ipmask_len)))
++      count++;
++  }
++
++  return count;
++}
++
++/** Count number of users with a realname matching \a mask.
++ * @param[in] mask Wildcard mask to match against realnames.
++ * @return Count of matching users.
++ */
++static int
++count_realnames(const char *mask)
++{
++  struct Client *acptr;
++  int minlen;
++  int count;
++  char cmask[BUFSIZE];
++
++  count = 0;
++  matchcomp(cmask, &minlen, NULL, mask);
++  for (acptr = GlobalClientList; acptr; acptr = cli_next(acptr)) {
++    if (!IsUser(acptr))
++      continue;
++    if (strlen(cli_info(acptr)) < minlen)
++      continue;
++    if (!matchexec(cli_info(acptr), cmask, minlen))
++      count++;
++  }
++  return count;
++}
++
++/** Create a new mute and add it to global lists.
++ * \a userhost may be in one of four forms:
++ * \li A string starting with $R and followed by a mask to match against their realname.
++ * \li A user\@IP mask (user\@ part optional) to create an IP-based ban.
++ * \li A user\@host mask (user\@ part optional) to create a hostname ban.
++ *
++ * @param[in] cptr Client that sent us the mute.
++ * @param[in] sptr Client that originated the mute.
++ * @param[in] userhost Text mask for the mute.
++ * @param[in] reason Reason for mute.
++ * @param[in] expire Expiration time of mute.
++ * @param[in] lastmod Last modification time of mute.
++ * @param[in] lifetime Lifetime of mute.
++ * @param[in] flags Bitwise combination of MUTE_* flags.
++ * @return Zero or CPTR_KILLED, depending on whether \a sptr is suicidal.
++ */
++int
++mute_add(struct Client *cptr, struct Client *sptr, char *userhost,
++	  char *reason, time_t expire, time_t lastmod, time_t lifetime,
++	  unsigned int flags)
++{
++  struct Mute *amute;
++  char uhmask[USERLEN + HOSTLEN + 2];
++  char *user, *host;
++  int tmp;
++
++  assert(0 != userhost);
++  assert(0 != reason);
++  assert(((flags & (MUTE_GLOBAL | MUTE_LOCAL)) == MUTE_GLOBAL) ||
++         ((flags & (MUTE_GLOBAL | MUTE_LOCAL)) == MUTE_LOCAL));
++
++  Debug((DEBUG_DEBUG, "mute_add(\"%s\", \"%s\", \"%s\", \"%s\", %Tu, %Tu "
++	 "%Tu, 0x%04x)", cli_name(cptr), cli_name(sptr), userhost, reason,
++	 expire, lastmod, lifetime, flags));
++
++  if (*userhost == '$') {
++    switch (userhost[1]) {
++      case 'R': flags |= MUTE_REALNAME; break;
++      default:
++        /* uh, what to do here? */
++        /* The answer, my dear Watson, is we throw a protocol_violation()
++           -- hikari */
++        if (IsServer(cptr))
++          return protocol_violation(sptr,"%s has been smoking the sweet leaf and sent me a whacky mute",cli_name(sptr));
++        sendto_opmask_butone(NULL, SNO_GLINE, "%s has been smoking the sweet leaf and sent me a whacky mute", cli_name(sptr));
++        return 0;
++    }
++    user = userhost;
++    host = NULL;
++    if (MyUser(sptr) || (IsUser(sptr) && flags & MUTE_LOCAL)) {
++      tmp = count_realnames(userhost + 2);
++      if ((tmp >= feature_int(FEAT_MUTEMAXUSERCOUNT))
++	  && !(flags & MUTE_OPERFORCE))
++	return send_reply(sptr, ERR_TOOMANYUSERS, tmp);
++    }
++  } else {
++    canon_userhost(userhost, &user, &host, "*");
++    if (sizeof(uhmask) <
++	ircd_snprintf(0, uhmask, sizeof(uhmask), "%s@%s", user, host))
++      return send_reply(sptr, ERR_LONGMASK);
++    else if (MyUser(sptr) || (IsUser(sptr) && flags & MUTE_LOCAL)) {
++      switch (mute_checkmask(host)) {
++      case CHECK_OVERRIDABLE: /* oper overrided restriction */
++	if (flags & MUTE_OPERFORCE)
++	  break;
++	/*FALLTHROUGH*/
++      case CHECK_REJECTED:
++	return send_reply(sptr, ERR_MASKTOOWIDE, uhmask);
++	break;
++      }
++
++      if ((tmp = count_users(uhmask, flags)) >=
++	  feature_int(FEAT_MUTEMAXUSERCOUNT) && !(flags & MUTE_OPERFORCE))
++	return send_reply(sptr, ERR_TOOMANYUSERS, tmp);
++    }
++  }
++
++  /*
++   * You cannot set a negative (or zero) expire time, nor can you set an
++   * expiration time for greater than MUTE_MAX_EXPIRE.
++   */
++  if (!(flags & MUTE_FORCE) &&
++      (expire <= CurrentTime || expire > CurrentTime + MUTE_MAX_EXPIRE)) {
++    if (!IsServer(sptr) && MyConnect(sptr))
++      send_reply(sptr, ERR_BADEXPIRE, expire);
++    return 0;
++  } else if (expire <= CurrentTime) {
++    /* This expired mute was forced to be added, so mark it inactive. */
++    flags &= ~MUTE_ACTIVE;
++  }
++
++  if (!lifetime) /* no lifetime set, use expiration time */
++    lifetime = expire;
++
++  /* lifetime is already an absolute timestamp */
++
++  /* Inform ops... */
++  sendto_opmask_butone(0, ircd_strncmp(reason, "AUTO", 4) ? SNO_GLINE :
++                       SNO_AUTO, "%s adding %s%s MUTE for %s%s%s, expiring at "
++                       "%Tu: %s",
++                       (feature_bool(FEAT_HIS_SNOTICES) || IsServer(sptr)) ?
++                         cli_name(sptr) :
++                         cli_name((cli_user(sptr))->server),
++                       (flags & MUTE_ACTIVE) ? "" : "deactivated ",
++		       (flags & MUTE_LOCAL) ? "local" : "global", user,
++		       (flags & MUTE_REALNAME) ? "" : "@",
++		       (flags & MUTE_REALNAME) ? "" : host,
++		       expire + TSoffset, reason);
++
++  /* and log it */
++  log_write(LS_GLINE, L_INFO, LOG_NOSNOTICE,
++	    "%#C adding %s MUTE for %s%s%s, expiring at %Tu: %s", sptr,
++	    flags & MUTE_LOCAL ? "local" : "global", user,
++	    flags & MUTE_REALNAME ? "" : "@",
++	    flags & MUTE_REALNAME ? "" : host,
++	    expire + TSoffset, reason);
++
++  /* make the mute */
++  amute = make_mute(user, host, reason, expire, lastmod, lifetime, flags);
++
++  /* since we've disabled overlapped mute checking, amute should
++   * never be NULL...
++   */
++  assert(amute);
++
++  mute_propagate(cptr, sptr, amute);
++
++  return do_mute(cptr, sptr, amute); /* knock off users if necessary */
++}
++
++/** Activate a currently inactive mute.
++ * @param[in] cptr Peer that told us to activate the mute.
++ * @param[in] sptr Client that originally thought it was a good idea.
++ * @param[in] mute mute to activate.
++ * @param[in] lastmod New value for last modification timestamp.
++ * @param[in] flags 0 if the activation should be propagated, MUTE_LOCAL if not.
++ * @return Zero, unless \a sptr had a death wish (in which case CPTR_KILLED).
++ */
++int
++mute_activate(struct Client *cptr, struct Client *sptr, struct Mute *mute,
++	       time_t lastmod, unsigned int flags)
++{
++  unsigned int saveflags = 0;
++
++  assert(0 != mute);
++
++  saveflags = mute->mt_flags;
++
++  if (flags & MUTE_LOCAL)
++    mute->mt_flags &= ~MUTE_LDEACT;
++  else {
++    mute->mt_flags |= MUTE_ACTIVE;
++
++    if (mute->mt_lastmod) {
++      if (mute->mt_lastmod >= lastmod) /* force lastmod to increase */
++	mute->mt_lastmod++;
++      else
++	mute->mt_lastmod = lastmod;
++    }
++  }
++
++  if ((saveflags & MUTE_ACTMASK) == MUTE_ACTIVE)
++    return 0; /* was active to begin with */
++
++  /* Inform ops and log it */
++  sendto_opmask_butone(0, SNO_GLINE, "%s activating global MUTE for %s%s%s, "
++                       "expiring at %Tu: %s",
++                       (feature_bool(FEAT_HIS_SNOTICES) || IsServer(sptr)) ?
++                         cli_name(sptr) :
++                         cli_name((cli_user(sptr))->server),
++                       mute->mt_user, mute->mt_host ? "@" : "",
++                       mute->mt_host ? mute->mt_host : "",
++                       mute->mt_expire + TSoffset, mute->mt_reason);
++  
++  log_write(LS_GLINE, L_INFO, LOG_NOSNOTICE,
++	    "%#C activating global MUTE for %s%s%s, expiring at %Tu: %s", sptr, mute->mt_user,
++	    mute->mt_host ? "@" : "",
++	    mute->mt_host ? mute->mt_host : "",
++	    mute->mt_expire + TSoffset, mute->mt_reason);
++
++  if (!(flags & MUTE_LOCAL)) /* don't propagate local changes */
++    mute_propagate(cptr, sptr, mute);
++
++  return do_mute(cptr, sptr, mute);
++}
++
++/** Deactivate a mute.
++ * @param[in] cptr Peer that gave us the message.
++ * @param[in] sptr Client that initiated the deactivation.
++ * @param[in] mute mute to deactivate.
++ * @param[in] lastmod New value for mute last modification timestamp.
++ * @param[in] flags MUTE_LOCAL to only deactivate locally, 0 to propagate.
++ * @return Zero.
++ */
++int
++mute_deactivate(struct Client *cptr, struct Client *sptr, struct Mute *mute,
++		 time_t lastmod, unsigned int flags)
++{
++  unsigned int saveflags = 0;
++  char *msg;
++
++  assert(0 != mute);
++
++  saveflags = mute->mt_flags;
++
++  if (MuteIsLocal(mute))
++    msg = "removing local";
++  else if (!mute->mt_lastmod && !(flags & MUTE_LOCAL)) {
++    msg = "removing global";
++    mute->mt_flags &= ~MUTE_ACTIVE; /* propagate a -<mask> */
++  } else {
++    msg = "deactivating global";
++
++    if (flags & MUTE_LOCAL)
++      mute->mt_flags |= MUTE_LDEACT;
++    else {
++      mute->mt_flags &= ~MUTE_ACTIVE;
++
++      if (mute->mt_lastmod) {
++	if (mute->mt_lastmod >= lastmod)
++	  mute->mt_lastmod++;
++	else
++	  mute->mt_lastmod = lastmod;
++      }
++    }
++
++    if ((saveflags & MUTE_ACTMASK) != MUTE_ACTIVE)
++      return 0; /* was inactive to begin with */
++  }
++
++  /* Inform ops and log it */
++  sendto_opmask_butone(0, SNO_GLINE, "%s %s MUTE for %s%s%s, expiring at %Tu: "
++		       "%s",
++                       (feature_bool(FEAT_HIS_SNOTICES) || IsServer(sptr)) ?
++                         cli_name(sptr) :
++                         cli_name((cli_user(sptr))->server),
++		       msg, mute->mt_user, mute->mt_host ? "@" : "",
++                       mute->mt_host ? mute->mt_host : "",
++		       mute->mt_expire + TSoffset, mute->mt_reason);
++
++  log_write(LS_GLINE, L_INFO, LOG_NOSNOTICE,
++	    "%#C %s MUTE for %s%s%s, expiring at %Tu: %s", sptr, msg,
++	    mute->mt_user,
++	    mute->mt_host ? "@" : "",
++	    mute->mt_host ? mute->mt_host : "",
++	    mute->mt_expire + TSoffset, mute->mt_reason);
++
++  if (!(flags & MUTE_LOCAL)) /* don't propagate local changes */
++    mute_propagate(cptr, sptr, mute);
++
++  /* deactivate mutedness on affected users */
++  do_mute(cptr, sptr, mute);
++  
++  /* if it's a local mute or a Uworld mute (and not locally deactivated).. */
++  if (MuteIsLocal(mute) || (!mute->mt_lastmod && !(flags & MUTE_LOCAL)))
++    mute_free(mute, 0); /* get rid of it */
++
++  return 0;
++}
++
++/** Modify a global mute.
++ * @param[in] cptr Client that sent us the mute modification.
++ * @param[in] sptr Client that originated the mute modification.
++ * @param[in] mute mute being modified.
++ * @param[in] action Resultant status of the mute.
++ * @param[in] reason Reason for mute.
++ * @param[in] expire Expiration time of mute.
++ * @param[in] lastmod Last modification time of mute.
++ * @param[in] lifetime Lifetime of mute.
++ * @param[in] flags Bitwise combination of MUTE_* flags.
++ * @return Zero or CPTR_KILLED, depending on whether \a sptr is suicidal.
++ */
++int
++mute_modify(struct Client *cptr, struct Client *sptr, struct Mute *mute,
++	     enum MuteAction action, char *reason, time_t expire,
++	     time_t lastmod, time_t lifetime, unsigned int flags)
++{
++  char buf[BUFSIZE], *op = "";
++  int pos = 0;
++
++  assert(mute);
++  assert(!MuteIsLocal(mute));
++
++  Debug((DEBUG_DEBUG,  "mute_modify(\"%s\", \"%s\", \"%s%s%s\", %s, \"%s\", "
++	 "%Tu, %Tu, %Tu, 0x%04x)", cli_name(cptr), cli_name(sptr),
++	 mute->mt_user, mute->mt_host ? "@" : "",
++	 mute->mt_host ? mute->mt_host : "",
++	 action == MUTE_ACTIVATE ? "MUTE_ACTIVATE" :
++	 (action == MUTE_DEACTIVATE ? "MUTE_DEACTIVATE" :
++	  (action == MUTE_LOCAL_ACTIVATE ? "MUTE_LOCAL_ACTIVATE" :
++	   (action == MUTE_LOCAL_DEACTIVATE ? "MUTE_LOCAL_DEACTIVATE" :
++	    (action == MUTE_MODIFY ? "MUTE_MODIFY" : "<UNKNOWN>")))),
++	 reason, expire, lastmod, lifetime, flags));
++
++  /* First, let's check lastmod... */
++  if (action != MUTE_LOCAL_ACTIVATE && action != MUTE_LOCAL_DEACTIVATE) {
++    if (MuteLastMod(mute) > lastmod) { /* we have a more recent version */
++      if (IsBurstOrBurstAck(cptr))
++	return 0; /* middle of a burst, it'll resync on its own */
++      return mute_resend(cptr, mute); /* resync the server */
++    } else if (MuteLastMod(mute) == lastmod)
++      return 0; /* we have that version of the mute... */
++  }
++
++  /* All right, we know that there's a change of some sort.  What is it? */
++  /* first, check out the expiration time... */
++  if ((flags & MUTE_EXPIRE) && expire) {
++    if (!(flags & MUTE_FORCE) &&
++	(expire <= CurrentTime || expire > CurrentTime + MUTE_MAX_EXPIRE)) {
++      if (!IsServer(sptr) && MyConnect(sptr)) /* bad expiration time */
++	send_reply(sptr, ERR_BADEXPIRE, expire);
++      return 0;
++    }
++  } else
++    flags &= ~MUTE_EXPIRE;
++
++  /* Now check to see if there's any change... */
++  if ((flags & MUTE_EXPIRE) && expire == mute->mt_expire) {
++    flags &= ~MUTE_EXPIRE; /* no change to expiration time... */
++    expire = 0;
++  }
++
++  /* Next, check out lifetime--this one's a bit trickier... */
++  if (!(flags & MUTE_LIFETIME) || !lifetime)
++    lifetime = mute->mt_lifetime; /* use mute lifetime */
++
++  lifetime = IRCD_MAX(lifetime, expire); /* set lifetime to the max */
++
++  /* OK, let's see which is greater... */
++  if (lifetime > mute->mt_lifetime)
++    flags |= MUTE_LIFETIME; /* have to update lifetime */
++  else {
++    flags &= ~MUTE_LIFETIME; /* no change to lifetime */
++    lifetime = 0;
++  }
++
++  /* Finally, let's see if the reason needs to be updated */
++  if ((flags & MUTE_REASON) && reason &&
++      !ircd_strcmp(mute->mt_reason, reason))
++    flags &= ~MUTE_REASON; /* no changes to the reason */
++
++  /* OK, now let's take a look at the action... */
++  if ((action == MUTE_ACTIVATE && (mute->mt_flags & MUTE_ACTIVE)) ||
++      (action == MUTE_DEACTIVATE && !(mute->mt_flags & MUTE_ACTIVE)) ||
++      (action == MUTE_LOCAL_ACTIVATE &&
++       (mute->mt_state == MLOCAL_ACTIVATED)) ||
++      (action == MUTE_LOCAL_DEACTIVATE &&
++       (mute->mt_state == MLOCAL_DEACTIVATED)) ||
++      /* can't activate an expired mute */
++      IRCD_MAX(mute->mt_expire, expire) <= CurrentTime)
++    action = MUTE_MODIFY; /* no activity state modifications */
++
++  Debug((DEBUG_DEBUG,  "About to perform changes; flags 0x%04x, action %s",
++	 flags, action == MUTE_ACTIVATE ? "MUTE_ACTIVATE" :
++	 (action == MUTE_DEACTIVATE ? "MUTE_DEACTIVATE" :
++	  (action == MUTE_LOCAL_ACTIVATE ? "MUTE_LOCAL_ACTIVATE" :
++	   (action == MUTE_LOCAL_DEACTIVATE ? "MUTE_LOCAL_DEACTIVATE" :
++	    (action == MUTE_MODIFY ? "MUTE_MODIFY" : "<UNKNOWN>"))))));
++
++  /* If there are no changes to perform, do no changes */
++  if (!(flags & MUTE_UPDATE) && action == MUTE_MODIFY)
++    return 0;
++
++  /* Now we know what needs to be changed, so let's process the changes... */
++
++  /* Start by updating lastmod, if indicated... */
++  if (action != MUTE_LOCAL_ACTIVATE && action != MUTE_LOCAL_DEACTIVATE)
++    mute->mt_lastmod = lastmod;
++
++  /* Then move on to activity status changes... */
++  switch (action) {
++  case MUTE_ACTIVATE: /* Globally activating mute */
++    mute->mt_flags |= MUTE_ACTIVE; /* make it active... */
++    mute->mt_state = MLOCAL_GLOBAL; /* reset local activity state */
++    pos += ircd_snprintf(0, buf, sizeof(buf), " globally activating mute");
++    op = "+"; /* operation for mute propagation */
++    break;
++
++  case MUTE_DEACTIVATE: /* Globally deactivating mute */
++    mute->mt_flags &= ~MUTE_ACTIVE; /* make it inactive... */
++    mute->mt_state = MLOCAL_GLOBAL; /* reset local activity state */
++    pos += ircd_snprintf(0, buf, sizeof(buf), " globally deactivating mute");
++    op = "-"; /* operation for mute propagation */
++    break;
++
++  case MUTE_LOCAL_ACTIVATE: /* Locally activating mute */
++    mute->mt_state = MLOCAL_ACTIVATED; /* make it locally active */
++    pos += ircd_snprintf(0, buf, sizeof(buf), " locally activating mute");
++    break;
++
++  case MUTE_LOCAL_DEACTIVATE: /* Locally deactivating mute */
++    mute->mt_state = MLOCAL_DEACTIVATED; /* make it locally inactive */
++    pos += ircd_snprintf(0, buf, sizeof(buf), " locally deactivating mute");
++    break;
++
++  case MUTE_MODIFY: /* no change to activity status */
++    break;
++  }
++
++  /* Handle expiration changes... */
++  if (flags & MUTE_EXPIRE) {
++    mute->mt_expire = expire; /* save new expiration time */
++    if (pos < BUFSIZE)
++      pos += ircd_snprintf(0, buf + pos, sizeof(buf) - pos,
++			   "%s%s changing expiration time to %Tu",
++			   pos ? ";" : "",
++			   pos && !(flags & (MUTE_LIFETIME | MUTE_REASON)) ?
++			   " and" : "", expire);
++  }
++
++  /* Next, handle lifetime changes... */
++  if (flags & MUTE_LIFETIME) {
++    mute->mt_lifetime = lifetime; /* save new lifetime */
++    if (pos < BUFSIZE)
++      pos += ircd_snprintf(0, buf + pos, sizeof(buf) - pos,
++			   "%s%s extending record lifetime to %Tu",
++			   pos ? ";" : "", pos && !(flags & MUTE_REASON) ?
++			   " and" : "", lifetime);
++  }
++
++  /* Now, handle reason changes... */
++  if (flags & MUTE_REASON) {
++    MyFree(mute->mt_reason); /* release old reason */
++    DupString(mute->mt_reason, reason); /* store new reason */
++    if (pos < BUFSIZE)
++      pos += ircd_snprintf(0, buf + pos, sizeof(buf) - pos,
++			   "%s%s changing reason to \"%s\"",
++			   pos ? ";" : "", pos ? " and" : "", reason);
++  }
++
++  /* All right, inform ops... */
++  sendto_opmask_butone(0, SNO_GLINE, "%s modifying global MUTE for %s%s%s:%s",
++		       (feature_bool(FEAT_HIS_SNOTICES) || IsServer(sptr)) ?
++		       cli_name(sptr) : cli_name((cli_user(sptr))->server),
++		       mute->mt_user, mute->mt_host ? "@" : "",
++		       mute->mt_host ? mute->mt_host : "", buf);
++
++  /* and log the change */
++  log_write(LS_GLINE, L_INFO, LOG_NOSNOTICE,
++	    "%#C modifying global MUTE for %s%s%s:%s", sptr, mute->mt_user,
++	    mute->mt_host ? "@" : "", mute->mt_host ? mute->mt_host : "",
++	    buf);
++
++  /* We'll be simple for this release, but we can update this to change
++   * the propagation syntax on future updates
++   */
++  if (action != MUTE_LOCAL_ACTIVATE && action != MUTE_LOCAL_DEACTIVATE)
++    sendcmdto_serv_butone(sptr, CMD_MUTE, cptr,
++			  "* %s%s%s%s%s %Tu %Tu %Tu :%s",
++			  flags & MUTE_OPERFORCE ? "!" : "", op,
++			  mute->mt_user, mute->mt_host ? "@" : "",
++			  mute->mt_host ? mute->mt_host : "",
++			  mute->mt_expire - CurrentTime, mute->mt_lastmod,
++			  mute->mt_lifetime, mute->mt_reason);
++
++  /* OK, let's do the mute... */
++  return do_mute(cptr, sptr, mute);
++}
++
++/** Destroy a local mute.
++ * @param[in] cptr Peer that gave us the message.
++ * @param[in] sptr Client that initiated the destruction.
++ * @param[in] mute mute to destroy.
++ * @return Zero.
++ */
++int
++mute_destroy(struct Client *cptr, struct Client *sptr, struct Mute *mute)
++{
++  assert(mute);
++  assert(MuteIsLocal(mute));
++
++  /* Inform ops and log it */
++  sendto_opmask_butone(0, SNO_GLINE, "%s removing local MUTE for %s%s%s",
++		       (feature_bool(FEAT_HIS_SNOTICES) || IsServer(sptr)) ?
++		       cli_name(sptr) : cli_name((cli_user(sptr))->server),
++		       mute->mt_user, mute->mt_host ? "@" : "",
++		       mute->mt_host ? mute->mt_host : "");
++  log_write(LS_GLINE, L_INFO, LOG_NOSNOTICE,
++	    "%#C removing local MUTE for %s%s%s", sptr, mute->mt_user,
++	    mute->mt_host ? "@" : "", mute->mt_host ? mute->mt_host : "");
++
++  mute_free(mute, 1); /* get rid of the mute */
++
++  return 0; /* convenience return */
++}
++
++/** Find a mute for a particular mask, guided by certain flags.
++ * Certain bits in \a flags are interpreted specially:
++ * <dl>
++ * <dt>MUTE_ANY</dt><dd>Search user mutes.</dd>
++ * <dt>MUTE_GLOBAL</dt><dd>Only match global mutes.</dd>
++ * <dt>MUTE_LOCAL</dt><dd>Only match local mutes.</dd>
++ * <dt>MUTE_LASTMOD</dt><dd>Only match mutes with a last modification time.</dd>
++ * <dt>MUTE_EXACT</dt><dd>Require an exact match of mute mask.</dd>
++ * <dt>anything else</dt><dd>Search user mutes.</dd>
++ * </dl>
++ * @param[in] userhost Mask to search for.
++ * @param[in] flags Bitwise combination of MUTE_* flags.
++ * @return First matching mute, or NULL if none are found.
++ */
++struct Mute *
++mute_find(char *userhost, unsigned int flags)
++{
++  struct Mute *mute = 0;
++  struct Mute *smute;
++  char *user, *host, *t_uh;
++
++  DupString(t_uh, userhost);
++  canon_userhost(t_uh, &user, &host, "*");
++
++  mtiter(GlobalMuteList, mute, smute) {
++    if ((flags & (MuteIsLocal(mute) ? MUTE_GLOBAL : MUTE_LOCAL)) ||
++	(flags & MUTE_LASTMOD && !mute->mt_lastmod))
++      continue;
++    else if (flags & MUTE_EXACT) {
++      if (((mute->mt_host && host && ircd_strcmp(mute->mt_host, host) == 0)
++           || (!mute->mt_host && !host)) &&
++          (ircd_strcmp(mute->mt_user, user) == 0))
++	break;
++    } else {
++      if (((mute->mt_host && host && match(mute->mt_host, host) == 0)
++           || (!mute->mt_host && !host)) &&
++	  (match(mute->mt_user, user) == 0))
++	break;
++    }
++  }
++
++  MyFree(t_uh);
++
++  return mute;
++}
++
++/** Find a matching mute for a user.
++ * @param[in] cptr Client to compare against.
++ * @param[in] flags Bitwise combination of MUTE_GLOBAL and/or
++ * MUTE_LASTMOD to limit matches.
++ * @return Matching mute, or NULL if none are found.
++ */
++struct Mute *
++mute_lookup(struct Client *cptr, unsigned int flags)
++{
++  struct Mute *mute;
++  struct Mute *smute;
++
++  mtiter(GlobalMuteList, mute, smute) {
++    if ((flags & MUTE_GLOBAL && mute->mt_flags & MUTE_LOCAL) ||
++        (flags & MUTE_LASTMOD && !mute->mt_lastmod))
++      continue;
++
++    if (MuteIsRealName(mute)) {
++      Debug((DEBUG_DEBUG,"realname mute: '%s' '%s'",mute->mt_user,cli_info(cptr)));
++      if (match(mute->mt_user+2, cli_info(cptr)) != 0)
++        continue;
++    }
++    else {
++      if (match(mute->mt_user, (cli_user(cptr))->username) != 0)
++        continue;
++
++      if (MuteIsIpMask(mute)) {
++        if (!ipmask_check(&cli_ip(cptr), &mute->mt_addr, mute->mt_bits))
++          continue;
++      }
++      else {
++        if (match(mute->mt_host, (cli_user(cptr))->realhost) != 0)
++          continue;
++      }
++    }
++    if (MuteIsActive(mute))
++      return mute;
++  }
++  /*
++   * No Mutes matched
++   */
++  return 0;
++}
++
++/** Delink and free a mute.
++ * @param[in] mute mute to free.
++ */
++void
++mute_free(struct Mute *mute, int reapply)
++{
++  assert(0 != mute);
++
++  if (reapply) {
++    /* remove the active flag so we can re-apply muted-ness to any affected users */
++    mute->mt_flags &= ~MUTE_ACTIVE;
++    do_mute(NULL, NULL, mute); /* unmute anyone that this affected */
++  }
++
++  *mute->mt_prev_p = mute->mt_next; /* squeeze this mute out */
++  if (mute->mt_next)
++    mute->mt_next->mt_prev_p = mute->mt_prev_p;
++
++  MyFree(mute->mt_user); /* free up the memory */
++  if (mute->mt_host)
++    MyFree(mute->mt_host);
++  MyFree(mute->mt_reason);
++  MyFree(mute);
++}
++
++/** Burst all known global mutes to another server.
++ * @param[in] cptr Destination of burst.
++ */
++void
++mute_burst(struct Client *cptr)
++{
++  struct Mute *mute;
++  struct Mute *smute;
++
++  mtiter(GlobalMuteList, mute, smute) {
++    if (!MuteIsLocal(mute) && mute->mt_lastmod)
++      sendcmdto_one(&me, CMD_MUTE, cptr, "* %c%s%s%s %Tu %Tu %Tu :%s",
++		    MuteIsRemActive(mute) ? '+' : '-', mute->mt_user,
++                    mute->mt_host ? "@" : "",
++                    mute->mt_host ? mute->mt_host : "",
++		    mute->mt_expire - CurrentTime, mute->mt_lastmod,
++                    mute->mt_lifetime, mute->mt_reason);
++  }
++}
++
++/** Send a mute to another server.
++ * @param[in] cptr Who to inform of the mute.
++ * @param[in] mute mute to send.
++ * @return Zero.
++ */
++int
++mute_resend(struct Client *cptr, struct Mute *mute)
++{
++  if (MuteIsLocal(mute) || !mute->mt_lastmod)
++    return 0;
++
++  sendcmdto_one(&me, CMD_MUTE, cptr, "* %c%s%s%s %Tu %Tu %Tu :%s",
++		MuteIsRemActive(mute) ? '+' : '-', mute->mt_user,
++		mute->mt_host ? "@" : "",
++                mute->mt_host ? mute->mt_host : "",
++		mute->mt_expire - CurrentTime, mute->mt_lastmod,
++		mute->mt_lifetime, mute->mt_reason);
++
++  return 0;
++}
++
++/** Display one or all mutes to a user.
++ * If \a userhost is not NULL, only send the first matching mute.
++ * Otherwise send the whole list.
++ * @param[in] sptr User asking for mute list.
++ * @param[in] userhost mute mask to search for (or NULL).
++ * @return Zero.
++ */
++int
++mute_list(struct Client *sptr, char *userhost)
++{
++  struct Mute *mute;
++  struct Mute *smute;
++
++  if (userhost) {
++    if (!(mute = mute_find(userhost, MUTE_ANY))) /* no such mute */
++      return send_reply(sptr, ERR_NOSUCHMUTE, userhost);
++
++    /* send mute information along */
++    send_reply(sptr, RPL_MUTELIST, mute->mt_user,
++               mute->mt_host ? "@" : "",
++               mute->mt_host ? mute->mt_host : "",
++	       mute->mt_expire + TSoffset, mute->mt_lastmod,
++	       mute->mt_lifetime + TSoffset,
++	       MuteIsLocal(mute) ? cli_name(&me) : "*",
++	       mute->mt_state == MLOCAL_ACTIVATED ? ">" :
++	       (mute->mt_state == MLOCAL_DEACTIVATED ? "<" : ""),
++	       MuteIsRemActive(mute) ? '+' : '-', mute->mt_reason);
++  } else {
++    mtiter(GlobalMuteList, mute, smute) {
++      send_reply(sptr, RPL_MUTELIST, mute->mt_user,
++		 mute->mt_host ? "@" : "",
++		 mute->mt_host ? mute->mt_host : "",
++		 mute->mt_expire + TSoffset, mute->mt_lastmod,
++		 mute->mt_lifetime + TSoffset,
++		 MuteIsLocal(mute) ? cli_name(&me) : "*",
++		 mute->mt_state == MLOCAL_ACTIVATED ? ">" :
++		 (mute->mt_state == MLOCAL_DEACTIVATED ? "<" : ""),
++		 MuteIsRemActive(mute) ? '+' : '-', mute->mt_reason);
++    }
++  }
++
++  /* end of mute information */
++  return send_reply(sptr, RPL_ENDOFMUTELIST);
++}
++
++/** Statistics callback to list mutes.
++ * @param[in] sptr Client requesting statistics.
++ * @param[in] sd Stats descriptor for request (ignored).
++ * @param[in] param Extra parameter from user (ignored).
++ */
++void
++mute_stats(struct Client *sptr, const struct StatDesc *sd,
++            char *param)
++{
++  struct Mute *mute;
++  struct Mute *smute;
++
++  mtiter(GlobalMuteList, mute, smute) {
++    send_reply(sptr, RPL_STATSMUTE, 'M', mute->mt_user,
++	       mute->mt_host ? "@" : "",
++	       mute->mt_host ? mute->mt_host : "",
++	       mute->mt_expire + TSoffset, mute->mt_lastmod,
++	       mute->mt_lifetime + TSoffset,
++	       mute->mt_state == MLOCAL_ACTIVATED ? ">" :
++	       (mute->mt_state == MLOCAL_DEACTIVATED ? "<" : ""),
++	       MuteIsRemActive(mute) ? '+' : '-',
++	       mute->mt_reason);
++  }
++}
++
++/** Calculate memory used by mutes.
++ * @param[out] mt_size Number of bytes used by mutes.
++ * @return Number of mutes in use.
++ */
++int
++mute_memory_count(size_t *mt_size)
++{
++  struct Mute *mute;
++  unsigned int mt = 0;
++
++  for (mute = GlobalMuteList; mute; mute = mute->mt_next) {
++    mt++;
++    *mt_size += sizeof(struct Mute);
++    *mt_size += mute->mt_user ? (strlen(mute->mt_user) + 1) : 0;
++    *mt_size += mute->mt_host ? (strlen(mute->mt_host) + 1) : 0;
++    *mt_size += mute->mt_reason ? (strlen(mute->mt_reason) + 1) : 0;
++  }
++
++  return mt;
++}
+diff -Nurp ircu2.10.12.13-rc2/ircd/parse.c ircu2.10.12.13-rc2-fakehost-mute/ircd/parse.c
+--- ircu2.10.12.13-rc2/ircd/parse.c	2010-01-02 14:33:10.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/parse.c	2010-05-25 12:19:56.000000000 -0500
+@@ -499,6 +499,13 @@ struct Message msgtab[] = {
+     { m_unregistered, m_gline, ms_gline, mo_gline, m_ignore }
+   },
+   {
++    MSG_MUTE,
++    TOK_MUTE,
++    0, MAXPARA,         0, 0, NULL,
++    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
++    { m_unregistered, m_mute, ms_mute, mo_mute, m_ignore }
++  },
++  {
+     MSG_JUPE,
+     TOK_JUPE,
+     0, MAXPARA, MFLG_SLOW, 0, NULL,
+@@ -640,6 +647,13 @@ struct Message msgtab[] = {
+     { m_cap, m_cap, m_ignore, m_cap, m_ignore }
+   },
+ #endif
++  {
++    MSG_FAKEHOST,
++    TOK_FAKEHOST,
++    0, MAXPARA, MFLG_SLOW, 0, NULL,
++    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
++    { m_ignore, m_not_oper, ms_fakehost, m_fakehost, m_ignore }
++  },
+   /* This command is an alias for QUIT during the unregistered part of
+    * of the server.  This is because someone jumping via a broken web
+    * proxy will send a 'POST' as their first command - which we will
+diff -Nurp ircu2.10.12.13-rc2/ircd/s_auth.c ircu2.10.12.13-rc2-fakehost-mute/ircd/s_auth.c
+--- ircu2.10.12.13-rc2/ircd/s_auth.c	2010-01-04 11:15:13.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/s_auth.c	2010-05-25 12:19:56.000000000 -0500
+@@ -366,6 +366,7 @@ static int check_auth_finished(struct Au
+ {
+   enum AuthRequestFlag flag;
+   int res;
++  const char *fakehost;
+ 
+   /* Check non-iauth registration blocking flags. */
+   for (flag = 0; flag <= AR_LAST_SCAN; ++flag)
+@@ -382,6 +383,14 @@ static int check_auth_finished(struct Au
+       && preregister_user(auth->client))
+     return CPTR_KILLED;
+ 
++  /* Set fakehost if client's connection class has a default fakehost. */
++  fakehost = client_get_default_fakehost(auth->client);
++  if (fakehost)
++  {
++    ircd_strncpy(cli_user(auth->client)->fakehost, fakehost, HOSTLEN);
++    SetFakeHost(auth->client);
++  }
++  
+   /* If we have not done so, check client password.  Do this as soon
+    * as possible so that iauth's challenge/response (which uses PASS
+    * for responses) is not confused with the client's password.
+diff -Nurp ircu2.10.12.13-rc2/ircd/s_err.c ircu2.10.12.13-rc2-fakehost-mute/ircd/s_err.c
+--- ircu2.10.12.13-rc2/ircd/s_err.c	2009-02-08 19:30:13.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/s_err.c	2010-05-25 12:19:39.000000000 -0500
+@@ -512,7 +512,7 @@ static Numeric replyTable[] = {
+ /* 239 */
+   { 0 },
+ /* 240 */
+-  { 0 },
++  { RPL_STATSMUTE, "%c %s%s%s %Tu %Tu %Tu %s%c :%s", "240" },
+ /* 241 */
+   { RPL_STATSLLINE, "Module Description EntryPoint", "241" },
+ /* 242 */
+@@ -588,9 +588,9 @@ static Numeric replyTable[] = {
+ /* 277 */
+   { 0 },
+ /* 278 */
+-  { 0 },
++  { RPL_MUTELIST, "%s%s%s %Tu %Tu %Tu %s %s%c :%s", "278" },
+ /* 279 */
+-  { 0 },
++  { RPL_ENDOFMUTELIST, ":End of Mute List", "279" },
+ /* 280 */
+   { RPL_GLIST, "%s%s%s %Tu %Tu %Tu %s %s%c :%s", "280" },
+ /* 281 */
+@@ -1052,7 +1052,7 @@ static Numeric replyTable[] = {
+ /* 509 */
+   { 0 },
+ /* 510 */
+-  { 0 },
++  { ERR_NOSUCHMUTE, "%s :No such mute", "510" },
+ /* 511 */
+   { ERR_SILELISTFULL, "%s :Your silence list is full", "511" },
+ /* 512 */
+diff -Nurp ircu2.10.12.13-rc2/ircd/s_serv.c ircu2.10.12.13-rc2-fakehost-mute/ircd/s_serv.c
+--- ircu2.10.12.13-rc2/ircd/s_serv.c	2005-06-27 19:42:06.000000000 -0500
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/s_serv.c	2010-05-25 12:19:39.000000000 -0500
+@@ -195,6 +195,7 @@ int server_estab(struct Client *cptr, st
+    * our burst.
+    */
+   gline_burst(cptr);
++  mute_burst(cptr);
+   jupe_burst(cptr);
+ 
+   /*
+diff -Nurp ircu2.10.12.13-rc2/ircd/s_stats.c ircu2.10.12.13-rc2-fakehost-mute/ircd/s_stats.c
+--- ircu2.10.12.13-rc2/ircd/s_stats.c	2010-01-01 22:00:13.000000000 -0600
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/s_stats.c	2010-05-25 12:19:39.000000000 -0500
+@@ -39,6 +39,7 @@
+ #include "motd.h"
+ #include "msg.h"
+ #include "msgq.h"
++#include "mute.h"
+ #include "numeric.h"
+ #include "numnicks.h"
+ #include "querycmds.h"
+@@ -573,6 +574,9 @@ struct StatDesc statsinfo[] = {
+     FEAT_HIS_STATS_L,
+     stats_modules, 0,
+     "Dynamically loaded modules." },
++  { 'M', "mutes", (STAT_FLAG_OPERFEAT | STAT_FLAG_CASESENS), FEAT_HIS_STATS_m,
++    mute_stats, 0,
++    "Global mutes." },
+   { 'm', "commands", (STAT_FLAG_OPERFEAT | STAT_FLAG_CASESENS), FEAT_HIS_STATS_m,
+     stats_commands, 0,
+     "Message usage information." },
+diff -Nurp ircu2.10.12.13-rc2/ircd/s_user.c ircu2.10.12.13-rc2-fakehost-mute/ircd/s_user.c
+--- ircu2.10.12.13-rc2/ircd/s_user.c	2009-07-30 21:04:15.000000000 -0500
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/s_user.c	2010-05-25 12:19:56.000000000 -0500
+@@ -45,6 +45,7 @@
+ #include "motd.h"
+ #include "msg.h"
+ #include "msgq.h"
++#include "mute.h"
+ #include "numeric.h"
+ #include "numnicks.h"
+ #include "parse.h"
+@@ -340,10 +341,12 @@ int hunt_server_prio_cmd(struct Client *
+  */
+ int register_user(struct Client *cptr, struct Client *sptr)
+ {
++  const char*      fakehost;
+   char*            parv[4];
+   char*            tmpstr;
+   struct User*     user = cli_user(sptr);
+   char             ip_base64[25];
++  struct Flags     setflags;
+ 
+   user->last = CurrentTime;
+   parv[0] = cli_name(sptr);
+@@ -358,6 +361,7 @@ int register_user(struct Client *cptr, s
+     /*
+      * Set user's initial modes
+      */
++    setflags = cli_flags(sptr);
+     tmpstr = (char*)client_get_default_umode(sptr);
+     if (tmpstr) {
+       char *umodev[] = { NULL, NULL, NULL, NULL };
+@@ -438,12 +442,12 @@ int register_user(struct Client *cptr, s
+    * account assignment causes a numeric reply during registration.
+    */
+   if (HasHiddenHost(sptr))
+-    hide_hostmask(sptr, FLAG_HIDDENHOST);
++    hide_hostmask(sptr);
+   if (IsInvisible(sptr))
+     ++UserStats.inv_clients;
+   if (IsOper(sptr))
+     ++UserStats.opers;
+-
++  
+   tmpstr = umode_str(sptr);
+   /* Send full IP address to IPv6-grokking servers. */
+   sendcmdto_flag_serv_butone(user->server, CMD_NICK, cptr,
+@@ -499,7 +503,8 @@ static const struct UserMode {
+   { FLAG_CHSERV,      'k' },
+   { FLAG_DEBUG,       'g' },
+   { FLAG_ACCOUNT,     'r' },
+-  { FLAG_HIDDENHOST,  'x' }
++  { FLAG_HIDDENHOST,  'x' },
++  { FLAG_FAKEHOST,    'f' }
+ };
+ 
+ /** Length of #userModeList. */
+@@ -574,6 +579,10 @@ int set_nick_name(struct Client* cptr, s
+      * banned.  If so, do not allow the nick change to occur.
+      */
+     if (MyUser(sptr)) {
++      /* Refuse nick change if user is mute. */
++      if (MuteLookup(sptr))
++        return 0;
++      
+       const char* channel_name;
+       struct Membership *member;
+       if ((channel_name = find_no_nickchange_channel(sptr))) {
+@@ -871,39 +880,52 @@ void send_user_info(struct Client* sptr,
+   msgq_clean(mb);
+ }
+ 
++/*
++ * make_hidden_hostmask()
++ * Generates a user's hidden hostmask based on their account unless
++ * they have a custom [vanity] host set. This function expects a
++ * buffer of sufficient size to hold the resulting hostmask.
++ */
++void make_hidden_hostmask(char *buffer, struct Client *cptr)
++{
++  assert(HasFakeHost(cptr) || IsAccount(cptr));
++  
++  if (HasFakeHost(cptr)) {
++    /* The user has a fake host; make that their hidden hostmask. */
++    ircd_strncpy(buffer, cli_user(cptr)->fakehost, HOSTLEN);
++    return;
++  }
++  
++  if (IsAccount(cptr)) {
++    /* Generate a hidden host based on the user's account name. */
++    ircd_snprintf(0, buffer, HOSTLEN, "%s.%s", cli_user(cptr)->account,
++                  feature_str(FEAT_HIDDEN_HOST));
++    return;
++  }
++}
++
+ /** Set \a flag on \a cptr and possibly hide the client's hostmask.
+  * @param[in,out] cptr User who is getting a new flag.
+  * @param[in] flag Some flag that affects host-hiding (FLAG_HIDDENHOST, FLAG_ACCOUNT).
+  * @return Zero.
+  */
+ int
+-hide_hostmask(struct Client *cptr, unsigned int flag)
++hide_hostmask(struct Client *cptr)
+ {
+   struct Membership *chan;
+ 
+-  switch (flag) {
+-  case FLAG_HIDDENHOST:
+-    /* Local users cannot set +x unless FEAT_HOST_HIDING is true. */
+-    if (MyConnect(cptr) && !feature_bool(FEAT_HOST_HIDING))
+-      return 0;
+-    break;
+-  case FLAG_ACCOUNT:
+-    /* Invalidate all bans against the user so we check them again */
+-    for (chan = (cli_user(cptr))->channel; chan;
+-         chan = chan->next_channel)
+-      ClearBanValid(chan);
+-    break;
+-  default:
++  if (MyConnect(cptr) && !feature_bool(FEAT_HOST_HIDING))
+     return 0;
+-  }
+ 
+-  SetFlag(cptr, flag);
+-  if (!HasFlag(cptr, FLAG_HIDDENHOST) || !HasFlag(cptr, FLAG_ACCOUNT))
++  if (!HasHiddenHost(cptr))
+     return 0;
++  
++  /* Invalidate all bans against the user so we can them again */
++  for (chan = (cli_user(cptr))->channel; chan; chan = chan->next_channel)
++    ClearBanValid(chan);
+ 
+   sendcmdto_common_channels_butone(cptr, CMD_QUIT, cptr, ":Registered");
+-  ircd_snprintf(0, cli_user(cptr)->host, HOSTLEN, "%s.%s",
+-                cli_user(cptr)->account, feature_str(FEAT_HIDDEN_HOST));
++  make_hidden_hostmask(cli_user(cptr)->host, cptr);
+ 
+   /* ok, the client is now fully hidden, so let them know -- hikari */
+   if (MyConnect(cptr))
+@@ -917,8 +939,10 @@ hide_hostmask(struct Client *cptr, unsig
+   {
+     if (IsZombie(chan))
+       continue;
+-    /* Send a JOIN unless the user's join has been delayed. */
+-    if (!IsDelayedJoin(chan))
++    /* For a user with no modes in a join-delayed channel, do not show the rejoin. */
++    if (!IsChanOp(chan) && !HasVoice(chan) && (chan->channel->mode.mode & MODE_DELJOINS))
++      SetDelayedJoin(chan);
++    else
+       sendcmdto_channel_butserv_butone(cptr, CMD_JOIN, chan->channel, cptr, 0,
+                                          "%H", chan->channel);
+     if (IsChanOp(chan) && HasVoice(chan))
+@@ -959,6 +983,7 @@ int set_user_mode(struct Client *cptr, s
+   int prop = 0;
+   int do_host_hiding = 0;
+   char* account = NULL;
++  char* fakehost = NULL;
+ 
+   what = MODE_ADD;
+ 
+@@ -969,7 +994,8 @@ int set_user_mode(struct Client *cptr, s
+     for (i = 0; i < USERMODELIST_SIZE; i++)
+     {
+       if (HasFlag(sptr, userModeList[i].flag) &&
+-          userModeList[i].flag != FLAG_ACCOUNT)
++          (userModeList[i].flag != FLAG_ACCOUNT) &&
++          (userModeList[i].flag != FLAG_FAKEHOST))
+         *m++ = userModeList[i].c;
+     }
+     *m = '\0';
+@@ -1074,16 +1100,27 @@ int set_user_mode(struct Client *cptr, s
+           ClearDebug(sptr);
+         break;
+       case 'x':
+-        if (what == MODE_ADD)
+-	  do_host_hiding = 1;
+-	break;
++        if (what == MODE_ADD) {
++          SetHiddenHost(sptr);
++          if (!FlagHas(&setflags, FLAG_HIDDENHOST))
++            do_host_hiding = 1;
++        }
++        break;
+       case 'r':
+-	if (*(p + 1) && (what == MODE_ADD)) {
+-	  account = *(++p);
+-	  SetAccount(sptr);
+-	}
+-	/* There is no -r */
+-	break;
++        if (*(p + 1) && (what == MODE_ADD)) {
++          account = *(++p);
++          SetAccount(sptr);
++        }
++        /* There is no -r */
++        break;
++      case 'f':
++        if (*(p + 1) && (what == MODE_ADD)) {
++          fakehost = *(++p);
++          ircd_strncpy(cli_user(sptr)->fakehost, fakehost, HOSTLEN);
++          SetFakeHost(sptr);
++        }
++        /* There is no -f */
++        break;
+       default:
+         send_reply(sptr, ERR_UMODEUNKNOWNFLAG, *m);
+         break;
+@@ -1157,7 +1194,7 @@ int set_user_mode(struct Client *cptr, s
+       ircd_strncpy(cli_user(sptr)->account, account, len);
+   }
+   if (!FlagHas(&setflags, FLAG_HIDDENHOST) && do_host_hiding && allow_modes != ALLOWMODES_DEFAULT)
+-    hide_hostmask(sptr, FLAG_HIDDENHOST);
++    hide_hostmask(sptr);
+ 
+   if (IsRegistered(sptr)) {
+     if (!FlagHas(&setflags, FLAG_OPER) && IsOper(sptr)) {
+@@ -1218,6 +1255,7 @@ char *umode_str(struct Client *cptr)
+     *m++ = ' ';
+     while ((*m++ = *t++))
+       ; /* Empty loop */
++    m--; /* back up over previous null-termination */
+ 
+     if (cli_user(cptr)->acc_create) {
+       char nbuf[20];
+@@ -1226,12 +1264,21 @@ char *umode_str(struct Client *cptr)
+ 	     cli_user(cptr)->acc_create));
+       ircd_snprintf(0, t = nbuf, sizeof(nbuf), ":%Tu",
+ 		    cli_user(cptr)->acc_create);
+-      m--; /* back up over previous nul-termination */
+       while ((*m++ = *t++))
+-	; /* Empty loop */
++        ; /* Empty loop */
++      m--; /* back up over previous nul-termination */
+     }
+   }
+ 
++  if (HasFakeHost(cptr))
++  {
++    char *t = cli_user(cptr)->fakehost;
++
++    *m++ = ' ';
++    while ((*m++ = *t++))
++      ; /* Empty loop */
++  }
++
+   *m = '\0';
+ 
+   return umodeBuf;                /* Note: static buffer, gets
+@@ -1266,6 +1313,8 @@ void send_umode(struct Client *cptr, str
+     if (FlagHas(old, flag)
+         == HasFlag(sptr, flag))
+       continue;
++    if (flag == FLAG_ACCOUNT || flag == FLAG_FAKEHOST)
++      continue;
+     switch (sendset)
+     {
+     case ALL_UMODES:
