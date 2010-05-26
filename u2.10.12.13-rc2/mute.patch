@@ -194,7 +194,7 @@ diff -Nurp ircu2.10.12.13-rc2/doc/readme.mute ircu2.10.12.13-rc2-mute/doc/readme
 +lifetime for the mute record.  Note that, for existing mutes where
 +only state changes (global activation or deactivation) are necessary,
 +only <lastmod> is required; <expiration> must be specified for all
-+other forms of the GL command.
++other forms of the MT command.
 diff -Nurp ircu2.10.12.13-rc2/include/client.h ircu2.10.12.13-rc2-mute/include/client.h
 --- ircu2.10.12.13-rc2/include/client.h	2009-02-08 22:11:04.000000000 -0600
 +++ ircu2.10.12.13-rc2-mute/include/client.h	2010-05-25 04:41:04.000000000 -0500
