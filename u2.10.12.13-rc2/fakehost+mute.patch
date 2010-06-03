@@ -201,7 +201,7 @@ diff -Nurp ircu2.10.12.13-rc2/doc/readme.mute ircu2.10.12.13-rc2-fakehost-mute/d
 +lifetime for the mute record.  Note that, for existing mutes where
 +only state changes (global activation or deactivation) are necessary,
 +only <lastmod> is required; <expiration> must be specified for all
-+other forms of the GL command.
++other forms of the MT command.
 diff -Nurp ircu2.10.12.13-rc2/include/class.h ircu2.10.12.13-rc2-fakehost-mute/include/class.h
 --- ircu2.10.12.13-rc2/include/class.h	2005-10-04 20:53:30.000000000 -0500
 +++ ircu2.10.12.13-rc2-fakehost-mute/include/class.h	2010-05-25 12:19:56.000000000 -0500
