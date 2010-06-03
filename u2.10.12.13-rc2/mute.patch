@@ -492,7 +492,7 @@ diff -Nurp ircu2.10.12.13-rc2/include/numeric.h ircu2.10.12.13-rc2-mute/include/
  /*	ERR_TOOMANYWATCH     512           Numeric List: Dalnet */
 diff -Nurp ircu2.10.12.13-rc2/ircd/Makefile.in ircu2.10.12.13-rc2-mute/ircd/Makefile.in
 --- ircu2.10.12.13-rc2/ircd/Makefile.in	2010-01-04 11:15:13.000000000 -0600
-+++ ircu2.10.12.13-rc2-mute/ircd/Makefile.in	2010-05-25 11:19:45.000000000 -0500
++++ ircu2.10.12.13-rc2-mute/ircd/Makefile.in	2010-06-02 19:10:06.000000000 -0500
 @@ -146,6 +146,7 @@ IRCD_SRC = \
  	m_map.c \
  	m_mode.c \
@@ -518,6 +518,15 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/Makefile.in ircu2.10.12.13-rc2-mute/ircd/Make
    ../include/numnicks.h ../include/querycmds.h ../include/ircd_features.h \
    ../include/s_bsd.h ../include/s_conf.h ../include/client.h \
    ../include/s_debug.h ../include/s_misc.h ../include/s_user.h \
+@@ -442,7 +444,7 @@ ircd.o: ircd.c ../config.h ../include/ir
+   ../include/ircd_reply.h ../include/ircd_signal.h \
+   ../include/ircd_string.h ../include/ircd_chattr.h \
+   ../include/ircd_crypt.h ../include/jupe.h ../include/list.h \
+-  ../include/match.h ../include/motd.h ../include/msg.h \
++  ../include/match.h ../include/motd.h ../include/msg.h ../include/mute.h \
+   ../include/numeric.h ../include/numnicks.h ../include/opercmds.h \
+   ../include/parse.h ../include/res.h ../include/s_auth.h \
+   ../include/s_bsd.h ../include/s_conf.h ../include/s_debug.h \
 @@ -490,9 +492,9 @@ ircd_relay.o: ircd_relay.c ../config.h .
    ../include/hash.h ../include/ircd.h ../include/struct.h \
    ../include/ircd_chattr.h ../include/ircd_features.h \
@@ -658,7 +667,7 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/client.c ircu2.10.12.13-rc2-mute/ircd/client.
      ClrPriv(client, PRIV_BADCHAN);
 diff -Nurp ircu2.10.12.13-rc2/ircd/ircd.c ircu2.10.12.13-rc2-mute/ircd/ircd.c
 --- ircu2.10.12.13-rc2/ircd/ircd.c	2009-07-04 17:44:19.000000000 -0500
-+++ ircu2.10.12.13-rc2-mute/ircd/ircd.c	2010-06-02 18:50:25.000000000 -0500
++++ ircu2.10.12.13-rc2-mute/ircd/ircd.c	2010-06-03 12:47:11.000000000 -0500
 @@ -43,6 +43,7 @@
  #include "match.h"
  #include "motd.h"
@@ -675,12 +684,11 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/ircd.c ircu2.10.12.13-rc2-mute/ircd/ircd.c
  
  /** Daemon information. */
  static struct Daemon thisServer  = { 0, 0, 0, 0, 0, 0, -1 };
-@@ -733,6 +735,8 @@ int main(int argc, char **argv) {
+@@ -733,6 +735,7 @@ int main(int argc, char **argv) {
    timer_add(timer_init(&connect_timer), try_connections, 0, TT_RELATIVE, 1);
    timer_add(timer_init(&ping_timer), check_pings, 0, TT_RELATIVE, 1);
    timer_add(timer_init(&destruct_event_timer), exec_expired_destruct_events, 0, TT_PERIODIC, 60);
-+  if(!feature_bool(FEAT_DISABLE_MUTES))
-+    timer_add(timer_init(&mute_timer), check_expired_mutes, 0, TT_PERIODIC, 30);
++  timer_add(timer_init(&mute_timer), check_expired_mutes, 0, TT_PERIODIC, 30);
  
    CurrentTime = time(NULL);
  
@@ -1495,8 +1503,8 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/m_quit.c ircu2.10.12.13-rc2-mute/ircd/m_quit.
      return exit_client(cptr, sptr, sptr, "Quit");
 diff -Nurp ircu2.10.12.13-rc2/ircd/mute.c ircu2.10.12.13-rc2-mute/ircd/mute.c
 --- ircu2.10.12.13-rc2/ircd/mute.c	1969-12-31 18:00:00.000000000 -0600
-+++ ircu2.10.12.13-rc2-mute/ircd/mute.c	2010-06-02 18:51:01.000000000 -0500
-@@ -0,0 +1,1141 @@
++++ ircu2.10.12.13-rc2-mute/ircd/mute.c	2010-06-03 12:48:01.000000000 -0500
+@@ -0,0 +1,1144 @@
 +/*
 + * IRC - Internet Relay Chat, ircd/mute.c
 + * Copyright (C) 1990 Jarkko Oikarinen and
@@ -2628,6 +2636,9 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/mute.c ircu2.10.12.13-rc2-mute/ircd/mute.c
 +void check_expired_mutes(struct Event* ev)
 +{
 +  struct Mute *mute, *smute;
++
++  if (feature_bool(FEAT_DISABLE_MUTES))
++    return;
 +
 +  mtiter(GlobalMuteList, mute, smute) {
 +    /*
