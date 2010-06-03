@@ -201,7 +201,7 @@ diff -Nurp ircu2.10.12.13-rc2/doc/readme.mute ircu2.10.12.13-rc2-fakehost-mute/d
 +lifetime for the mute record.  Note that, for existing mutes where
 +only state changes (global activation or deactivation) are necessary,
 +only <lastmod> is required; <expiration> must be specified for all
-+other forms of the MT command.
++other forms of the GL command.
 diff -Nurp ircu2.10.12.13-rc2/include/class.h ircu2.10.12.13-rc2-fakehost-mute/include/class.h
 --- ircu2.10.12.13-rc2/include/class.h	2005-10-04 20:53:30.000000000 -0500
 +++ ircu2.10.12.13-rc2-fakehost-mute/include/class.h	2010-05-25 12:19:56.000000000 -0500
@@ -225,7 +225,7 @@ diff -Nurp ircu2.10.12.13-rc2/include/class.h ircu2.10.12.13-rc2-fakehost-mute/i
  
 diff -Nurp ircu2.10.12.13-rc2/include/client.h ircu2.10.12.13-rc2-fakehost-mute/include/client.h
 --- ircu2.10.12.13-rc2/include/client.h	2009-02-08 22:11:04.000000000 -0600
-+++ ircu2.10.12.13-rc2-fakehost-mute/include/client.h	2010-05-25 12:19:56.000000000 -0500
++++ ircu2.10.12.13-rc2-fakehost-mute/include/client.h	2010-06-03 12:41:00.000000000 -0500
 @@ -109,6 +109,8 @@ enum Priv
      PRIV_DIE, /**< oper can DIE */
      PRIV_GLINE, /**< oper can GLINE */
@@ -262,7 +262,16 @@ diff -Nurp ircu2.10.12.13-rc2/include/client.h ircu2.10.12.13-rc2-fakehost-mute/
      FLAG_LAST_FLAG,                 /**< number of flags */
      FLAG_LOCAL_UMODES = FLAG_LOCOP, /**< First local mode flag */
      FLAG_GLOBAL_UMODES = FLAG_OPER  /**< First global mode flag */
-@@ -585,7 +591,9 @@ struct Client {
+@@ -547,6 +553,8 @@ struct Client {
+ #define IsDead(x)               HasFlag(x, FLAG_DEADSOCKET)
+ /** Return non-zero if the client has set mode +d (deaf). */
+ #define IsDeaf(x)               HasFlag(x, FLAG_DEAF)
++/** Return non-zero if the client is affected by at least one active mute. */
++#define IsMute(x)               HasFlag(x, FLAG_MUTE)
+ /** Return non-zero if the client has been IP-checked for clones. */
+ #define IsIPChecked(x)          HasFlag(x, FLAG_IPCHECK)
+ /** Return non-zero if we have received an ident response for the client. */
+@@ -585,7 +593,9 @@ struct Client {
  /** Return non-zero if the client has operator or server privileges. */
  #define IsPrivileged(x)         (IsAnOper(x) || IsServer(x))
  /** Return non-zero if the client's host is hidden. */
@@ -273,7 +282,16 @@ diff -Nurp ircu2.10.12.13-rc2/include/client.h ircu2.10.12.13-rc2-fakehost-mute/
  
  /** Mark a client as having an in-progress net.burst. */
  #define SetBurst(x)             SetFlag(x, FLAG_BURST)
-@@ -625,6 +633,8 @@ struct Client {
+@@ -595,6 +605,8 @@ struct Client {
+ #define SetChannelService(x)    SetFlag(x, FLAG_CHSERV)
+ /** Mark a client as having mode +d (deaf). */
+ #define SetDeaf(x)              SetFlag(x, FLAG_DEAF)
++/** Mark a client as having one or more applicable mutes. */
++#define SetMute(x)              SetFlag(x, FLAG_MUTE)
+ /** Mark a client as having mode +g (debugging). */
+ #define SetDebug(x)             SetFlag(x, FLAG_DEBUG)
+ /** Mark a client as having ident looked up. */
+@@ -625,6 +637,8 @@ struct Client {
  #define SetAccount(x)           SetFlag(x, FLAG_ACCOUNT)
  /** Mark a client as having mode +x (hidden host). */
  #define SetHiddenHost(x)        SetFlag(x, FLAG_HIDDENHOST)
@@ -282,7 +300,16 @@ diff -Nurp ircu2.10.12.13-rc2/include/client.h ircu2.10.12.13-rc2-fakehost-mute/
  /** Mark a client as having a pending PING. */
  #define SetPingSent(x)          SetFlag(x, FLAG_PINGSENT)
  
-@@ -658,6 +668,8 @@ struct Client {
+@@ -640,6 +654,8 @@ struct Client {
+ #define ClearChannelService(x)  ClrFlag(x, FLAG_CHSERV)
+ /** Remove mode +d (deaf) from the client. */
+ #define ClearDeaf(x)            ClrFlag(x, FLAG_DEAF)
++/** Remove the client's mute flag. */
++#define ClearMute(x)            ClrFlag(x, FLAG_MUTE)
+ /** Remove mode +g (debugging) from the client. */
+ #define ClearDebug(x)           ClrFlag(x, FLAG_DEBUG)
+ /** Remove the client's IP-checked flag. */
+@@ -658,6 +674,8 @@ struct Client {
  #define ClearServNotice(x)      ClrFlag(x, FLAG_SERVNOTICE)
  /** Remove mode +x (hidden host) from the client. */
  #define ClearHiddenHost(x)      ClrFlag(x, FLAG_HIDDENHOST)
@@ -291,7 +318,7 @@ diff -Nurp ircu2.10.12.13-rc2/include/client.h ircu2.10.12.13-rc2-fakehost-mute/
  /** Clear the client's pending PING flag. */
  #define ClearPingSent(x)        ClrFlag(x, FLAG_PINGSENT)
  /** Clear the client's HUB flag. */
-@@ -729,6 +741,7 @@ struct Client {
+@@ -729,6 +747,7 @@ struct Client {
  
  extern const char* get_client_name(const struct Client* sptr, int showip);
  extern const char* client_get_default_umode(const struct Client* sptr);
@@ -376,8 +403,8 @@ diff -Nurp ircu2.10.12.13-rc2/include/msg.h ircu2.10.12.13-rc2-fakehost-mute/inc
  
 diff -Nurp ircu2.10.12.13-rc2/include/mute.h ircu2.10.12.13-rc2-fakehost-mute/include/mute.h
 --- ircu2.10.12.13-rc2/include/mute.h	1969-12-31 18:00:00.000000000 -0600
-+++ ircu2.10.12.13-rc2-fakehost-mute/include/mute.h	2010-05-25 12:19:39.000000000 -0500
-@@ -0,0 +1,146 @@
++++ ircu2.10.12.13-rc2-fakehost-mute/include/mute.h	2010-06-03 12:41:41.000000000 -0500
+@@ -0,0 +1,148 @@
 +#ifndef INCLUDED_mute_h
 +#define INCLUDED_mute_h
 +/*
@@ -415,6 +442,7 @@ diff -Nurp ircu2.10.12.13-rc2/include/mute.h ircu2.10.12.13-rc2-fakehost-mute/in
 +
 +struct Client;
 +struct StatDesc;
++struct Event;
 +
 +#define MUTE_MAX_EXPIRE 604800	/**< max expire: 7 days */
 +
@@ -522,6 +550,7 @@ diff -Nurp ircu2.10.12.13-rc2/include/mute.h ircu2.10.12.13-rc2-fakehost-mute/in
 +extern void mute_stats(struct Client *sptr, const struct StatDesc *sd,
 +                        char *param);
 +extern int mute_memory_count(size_t *mt_size);
++void check_expired_mutes(struct Event* ev);
 +
 +#endif /* INCLUDED_mute_h */
 diff -Nurp ircu2.10.12.13-rc2/include/numeric.h ircu2.10.12.13-rc2-fakehost-mute/include/numeric.h
@@ -578,7 +607,7 @@ diff -Nurp ircu2.10.12.13-rc2/include/struct.h ircu2.10.12.13-rc2-fakehost-mute/
  };
 diff -Nurp ircu2.10.12.13-rc2/ircd/Makefile.in ircu2.10.12.13-rc2-fakehost-mute/ircd/Makefile.in
 --- ircu2.10.12.13-rc2/ircd/Makefile.in	2010-01-04 11:15:13.000000000 -0600
-+++ ircu2.10.12.13-rc2-fakehost-mute/ircd/Makefile.in	2010-05-25 12:19:56.000000000 -0500
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/Makefile.in	2010-06-03 12:42:04.000000000 -0500
 @@ -130,6 +130,7 @@ IRCD_SRC = \
  	m_die.c \
  	m_endburst.c \
@@ -612,6 +641,15 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/Makefile.in ircu2.10.12.13-rc2-fakehost-mute/
    ../include/numnicks.h ../include/querycmds.h ../include/ircd_features.h \
    ../include/s_bsd.h ../include/s_conf.h ../include/client.h \
    ../include/s_debug.h ../include/s_misc.h ../include/s_user.h \
+@@ -442,7 +445,7 @@ ircd.o: ircd.c ../config.h ../include/ir
+   ../include/ircd_reply.h ../include/ircd_signal.h \
+   ../include/ircd_string.h ../include/ircd_chattr.h \
+   ../include/ircd_crypt.h ../include/jupe.h ../include/list.h \
+-  ../include/match.h ../include/motd.h ../include/msg.h \
++  ../include/match.h ../include/motd.h ../include/msg.h ../include/mute.h \
+   ../include/numeric.h ../include/numnicks.h ../include/opercmds.h \
+   ../include/parse.h ../include/res.h ../include/s_auth.h \
+   ../include/s_bsd.h ../include/s_conf.h ../include/s_debug.h \
 @@ -490,9 +493,9 @@ ircd_relay.o: ircd_relay.c ../config.h .
    ../include/hash.h ../include/ircd.h ../include/struct.h \
    ../include/ircd_chattr.h ../include/ircd_features.h \
@@ -722,7 +760,7 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/Makefile.in ircu2.10.12.13-rc2-fakehost-mute/
    ../include/client.h ../include/dbuf.h ../include/msgq.h \
 diff -Nurp ircu2.10.12.13-rc2/ircd/channel.c ircu2.10.12.13-rc2-fakehost-mute/ircd/channel.c
 --- ircu2.10.12.13-rc2/ircd/channel.c	2010-01-03 15:04:54.000000000 -0600
-+++ ircu2.10.12.13-rc2-fakehost-mute/ircd/channel.c	2010-05-25 12:19:56.000000000 -0500
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/channel.c	2010-06-03 12:42:39.000000000 -0500
 @@ -40,6 +40,7 @@
  #include "match.h"
  #include "msg.h"
@@ -782,7 +820,7 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/channel.c ircu2.10.12.13-rc2-fakehost-mute/ir
    }
  
 +  /* If you're mute, you can't speak. */
-+  if (MuteLookup(member->user))
++  if (IsMute(member->user))
 +    return 0;
 +  
    /* Discourage using the Apass to get op.  They should use the Upass. */
@@ -793,7 +831,7 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/channel.c ircu2.10.12.13-rc2-fakehost-mute/ir
      return 1;
  
 +  /* If you're mute, you can't speak. */
-+  if (MuteLookup(cptr))
++  if (IsMute(cptr))
 +    return 0;
 +
    member = find_channel_member(cptr, chptr);
@@ -854,6 +892,33 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/client.c ircu2.10.12.13-rc2-fakehost-mute/irc
  #undef P
    { 0, 0 }
  };
+diff -Nurp ircu2.10.12.13-rc2/ircd/ircd.c ircu2.10.12.13-rc2-fakehost-mute/ircd/ircd.c
+--- ircu2.10.12.13-rc2/ircd/ircd.c	2009-07-04 17:44:19.000000000 -0500
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/ircd.c	2010-06-03 12:44:19.000000000 -0500
+@@ -43,6 +43,7 @@
+ #include "match.h"
+ #include "motd.h"
+ #include "msg.h"
++#include "mute.h"
+ #include "numeric.h"
+ #include "numnicks.h"
+ #include "opercmds.h"
+@@ -117,6 +118,7 @@ static char   *dbg_client;              
+ static struct Timer connect_timer; /**< timer structure for try_connections() */
+ static struct Timer ping_timer; /**< timer structure for check_pings() */
+ static struct Timer destruct_event_timer; /**< timer structure for exec_expired_destruct_events() */
++static struct Timer mute_timer; /**< timer structure for check_expired_mutes() */
+ 
+ /** Daemon information. */
+ static struct Daemon thisServer  = { 0, 0, 0, 0, 0, 0, -1 };
+@@ -733,6 +735,7 @@ int main(int argc, char **argv) {
+   timer_add(timer_init(&connect_timer), try_connections, 0, TT_RELATIVE, 1);
+   timer_add(timer_init(&ping_timer), check_pings, 0, TT_RELATIVE, 1);
+   timer_add(timer_init(&destruct_event_timer), exec_expired_destruct_events, 0, TT_PERIODIC, 60);
++  timer_add(timer_init(&mute_timer), check_expired_mutes, 0, TT_PERIODIC, 30);
+ 
+   CurrentTime = time(NULL);
+ 
 diff -Nurp ircu2.10.12.13-rc2/ircd/ircd_features.c ircu2.10.12.13-rc2-fakehost-mute/ircd/ircd_features.c
 --- ircu2.10.12.13-rc2/ircd/ircd_features.c	2010-01-01 22:00:13.000000000 -0600
 +++ ircu2.10.12.13-rc2-fakehost-mute/ircd/ircd_features.c	2010-05-25 12:19:39.000000000 -0500
@@ -1005,70 +1070,62 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/ircd_parser.y ircu2.10.12.13-rc2-fakehost-mut
  
 diff -Nurp ircu2.10.12.13-rc2/ircd/ircd_relay.c ircu2.10.12.13-rc2-fakehost-mute/ircd/ircd_relay.c
 --- ircu2.10.12.13-rc2/ircd/ircd_relay.c	2009-07-04 17:46:00.000000000 -0500
-+++ ircu2.10.12.13-rc2-fakehost-mute/ircd/ircd_relay.c	2010-05-25 12:19:39.000000000 -0500
-@@ -57,6 +57,7 @@
- #include "ircd_string.h"
- #include "match.h"
- #include "msg.h"
-+#include "mute.h"
- #include "numeric.h"
- #include "numnicks.h"
- #include "s_debug.h"
-@@ -262,7 +263,7 @@ void relay_directed_message(struct Clien
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/ircd_relay.c	2010-06-03 12:46:42.000000000 -0500
+@@ -262,7 +262,7 @@ void relay_directed_message(struct Clien
    if (host)
      *--host = '%';
  
 -  if (!(is_silenced(sptr, acptr)))
-+  if (!(is_silenced(sptr, acptr)) && !MuteLookup(sptr))
++  if (!(is_silenced(sptr, acptr)) && !IsMute(sptr))
      sendcmdto_one(sptr, CMD_PRIVATE, acptr, "%s :%s", name, text);
  }
  
-@@ -311,7 +312,7 @@ void relay_directed_notice(struct Client
+@@ -311,7 +311,7 @@ void relay_directed_notice(struct Client
    if (host)
      *--host = '%';
  
 -  if (!(is_silenced(sptr, acptr)))
-+  if (!(is_silenced(sptr, acptr)) && !MuteLookup(sptr))
++  if (!(is_silenced(sptr, acptr)) && !IsMute(sptr))
      sendcmdto_one(sptr, CMD_NOTICE, acptr, "%s :%s", name, text);
  }
  
-@@ -337,7 +338,8 @@ void relay_private_message(struct Client
+@@ -337,7 +337,8 @@ void relay_private_message(struct Client
    }
    if ((!IsChannelService(acptr) &&
         check_target_limit(sptr, acptr, cli_name(acptr), 0)) ||
 -      is_silenced(sptr, acptr))
 +      is_silenced(sptr, acptr) ||
-+      MuteLookup(sptr))
++      IsMute(sptr))
      return;
  
    /*
-@@ -373,7 +375,8 @@ void relay_private_notice(struct Client*
+@@ -373,7 +374,8 @@ void relay_private_notice(struct Client*
      return;
    if ((!IsChannelService(acptr) && 
         check_target_limit(sptr, acptr, cli_name(acptr), 0)) ||
 -      is_silenced(sptr, acptr))
 +      is_silenced(sptr, acptr) ||
-+      MuteLookup(sptr))
++      IsMute(sptr))
      return;
    /*
     * deliver the message
-@@ -457,6 +460,10 @@ void relay_masked_message(struct Client*
+@@ -457,6 +459,10 @@ void relay_masked_message(struct Client*
    assert(0 != sptr);
    assert(0 != mask);
    assert(0 != text);
 +
-+  if (MuteLookup(sptr))
++  if (IsMute(sptr))
 +    return;
 +
    /*
     * look for the last '.' in mask and scan forward
     */
-@@ -499,6 +506,10 @@ void relay_masked_notice(struct Client* 
+@@ -499,6 +505,10 @@ void relay_masked_notice(struct Client* 
    assert(0 != sptr);
    assert(0 != mask);
    assert(0 != text);
 +
-+  if (MuteLookup(sptr))
++  if (IsMute(sptr))
 +    return;
 +
    /*
@@ -1922,31 +1979,20 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/m_mute.c ircu2.10.12.13-rc2-fakehost-mute/irc
 +}
 diff -Nurp ircu2.10.12.13-rc2/ircd/m_quit.c ircu2.10.12.13-rc2-fakehost-mute/ircd/m_quit.c
 --- ircu2.10.12.13-rc2/ircd/m_quit.c	2004-12-10 23:14:07.000000000 -0600
-+++ ircu2.10.12.13-rc2-fakehost-mute/ircd/m_quit.c	2010-05-25 12:19:39.000000000 -0500
-@@ -84,8 +84,10 @@
- #include "channel.h"
- #include "client.h"
- #include "ircd.h"
-+#include "ircd_features.h"
- #include "ircd_log.h"
- #include "ircd_string.h"
-+#include "mute.h"
- #include "struct.h"
- #include "s_misc.h"
- #include "ircd_reply.h"
-@@ -112,7 +114,7 @@ int m_quit(struct Client* cptr, struct C
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/m_quit.c	2010-06-03 12:54:35.000000000 -0500
+@@ -112,7 +112,7 @@ int m_quit(struct Client* cptr, struct C
          return exit_client(cptr, sptr, sptr, "Signed off");
      }
    }
 -  if (parc > 1 && !BadPtr(parv[parc - 1]))
-+  if (parc > 1 && !BadPtr(parv[parc - 1]) && !MuteLookup(sptr))
++  if (parc > 1 && !BadPtr(parv[parc - 1]) && !IsMute(sptr))
      return exit_client_msg(cptr, sptr, sptr, "Quit: %s", parv[parc - 1]);
    else
      return exit_client(cptr, sptr, sptr, "Quit");
 diff -Nurp ircu2.10.12.13-rc2/ircd/mute.c ircu2.10.12.13-rc2-fakehost-mute/ircd/mute.c
 --- ircu2.10.12.13-rc2/ircd/mute.c	1969-12-31 18:00:00.000000000 -0600
-+++ ircu2.10.12.13-rc2-fakehost-mute/ircd/mute.c	2010-05-25 12:19:39.000000000 -0500
-@@ -0,0 +1,1119 @@
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/mute.c	2010-06-03 12:55:05.000000000 -0500
+@@ -0,0 +1,1144 @@
 +/*
 + * IRC - Internet Relay Chat, ircd/mute.c
 + * Copyright (C) 1990 Jarkko Oikarinen and
@@ -1976,6 +2022,7 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/mute.c ircu2.10.12.13-rc2-fakehost-mute/ircd/
 +#include "client.h"
 +#include "ircd.h"
 +#include "ircd_alloc.h"
++#include "ircd_events.h"
 +#include "ircd_features.h"
 +#include "ircd_log.h"
 +#include "ircd_reply.h"
@@ -2165,7 +2212,11 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/mute.c ircu2.10.12.13-rc2-fakehost-mute/ircd/
 +        }
 +      }
 +
-+      /* no action necessary against client */
++      /* here's an affected client -- modify his mute flag accordingly */
++      if (MuteIsActive(mute))
++        SetMute(acptr);
++      else
++        ClearMute(acptr);
 +
 +      /* let the ops know about it */
 +      sendto_opmask_butone(0, SNO_GLINE, "Mute %s for %s",
@@ -3066,6 +3117,27 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/mute.c ircu2.10.12.13-rc2-fakehost-mute/ircd/
 +
 +  return mt;
 +}
++
++/** Timer function to check for expired mutes.
++ * @param[in] ev Expired timer event (ignored).
++ */
++void check_expired_mutes(struct Event* ev)
++{
++  struct Mute *mute, *smute;
++  
++  if(feature_bool(FEAT_DISABLE_MUTES))
++    return;
++  
++  mtiter(GlobalMuteList, mute, smute) {
++    /*
++     * The mtiter macro automatically takes care of mute_free'ing
++     * any expired mutes that it comes across. mute_free then
++     * deactivates them and calls do_mute for each so that affected
++     * local clients can have their mute flag cleared accordingly.
++     */
++  }
++}
+\ No newline at end of file
 diff -Nurp ircu2.10.12.13-rc2/ircd/parse.c ircu2.10.12.13-rc2-fakehost-mute/ircd/parse.c
 --- ircu2.10.12.13-rc2/ircd/parse.c	2010-01-02 14:33:10.000000000 -0600
 +++ ircu2.10.12.13-rc2-fakehost-mute/ircd/parse.c	2010-05-25 12:19:56.000000000 -0500
@@ -3190,7 +3262,7 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/s_stats.c ircu2.10.12.13-rc2-fakehost-mute/ir
      "Message usage information." },
 diff -Nurp ircu2.10.12.13-rc2/ircd/s_user.c ircu2.10.12.13-rc2-fakehost-mute/ircd/s_user.c
 --- ircu2.10.12.13-rc2/ircd/s_user.c	2009-07-30 21:04:15.000000000 -0500
-+++ ircu2.10.12.13-rc2-fakehost-mute/ircd/s_user.c	2010-05-25 12:19:56.000000000 -0500
++++ ircu2.10.12.13-rc2-fakehost-mute/ircd/s_user.c	2010-06-03 12:56:11.000000000 -0500
 @@ -45,6 +45,7 @@
  #include "motd.h"
  #include "msg.h"
@@ -3220,7 +3292,7 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/s_user.c ircu2.10.12.13-rc2-fakehost-mute/irc
      tmpstr = (char*)client_get_default_umode(sptr);
      if (tmpstr) {
        char *umodev[] = { NULL, NULL, NULL, NULL };
-@@ -438,12 +442,12 @@ int register_user(struct Client *cptr, s
+@@ -438,12 +442,15 @@ int register_user(struct Client *cptr, s
     * account assignment causes a numeric reply during registration.
     */
    if (HasHiddenHost(sptr))
@@ -3232,10 +3304,13 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/s_user.c ircu2.10.12.13-rc2-fakehost-mute/irc
      ++UserStats.opers;
 -
 +  
++  if (MuteLookup(sptr))
++    SetMute(sptr);
++  
    tmpstr = umode_str(sptr);
    /* Send full IP address to IPv6-grokking servers. */
    sendcmdto_flag_serv_butone(user->server, CMD_NICK, cptr,
-@@ -499,7 +503,8 @@ static const struct UserMode {
+@@ -499,7 +506,8 @@ static const struct UserMode {
    { FLAG_CHSERV,      'k' },
    { FLAG_DEBUG,       'g' },
    { FLAG_ACCOUNT,     'r' },
@@ -3245,18 +3320,18 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/s_user.c ircu2.10.12.13-rc2-fakehost-mute/irc
  };
  
  /** Length of #userModeList. */
-@@ -574,6 +579,10 @@ int set_nick_name(struct Client* cptr, s
+@@ -574,6 +582,10 @@ int set_nick_name(struct Client* cptr, s
       * banned.  If so, do not allow the nick change to occur.
       */
      if (MyUser(sptr)) {
 +      /* Refuse nick change if user is mute. */
-+      if (MuteLookup(sptr))
++      if (IsMute(sptr))
 +        return 0;
 +      
        const char* channel_name;
        struct Membership *member;
        if ((channel_name = find_no_nickchange_channel(sptr))) {
-@@ -871,39 +880,52 @@ void send_user_info(struct Client* sptr,
+@@ -871,39 +883,52 @@ void send_user_info(struct Client* sptr,
    msgq_clean(mb);
  }
  
@@ -3328,7 +3403,7 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/s_user.c ircu2.10.12.13-rc2-fakehost-mute/irc
  
    /* ok, the client is now fully hidden, so let them know -- hikari */
    if (MyConnect(cptr))
-@@ -917,8 +939,10 @@ hide_hostmask(struct Client *cptr, unsig
+@@ -917,8 +942,10 @@ hide_hostmask(struct Client *cptr, unsig
    {
      if (IsZombie(chan))
        continue;
@@ -3341,7 +3416,7 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/s_user.c ircu2.10.12.13-rc2-fakehost-mute/irc
        sendcmdto_channel_butserv_butone(cptr, CMD_JOIN, chan->channel, cptr, 0,
                                           "%H", chan->channel);
      if (IsChanOp(chan) && HasVoice(chan))
-@@ -959,6 +983,7 @@ int set_user_mode(struct Client *cptr, s
+@@ -959,6 +986,7 @@ int set_user_mode(struct Client *cptr, s
    int prop = 0;
    int do_host_hiding = 0;
    char* account = NULL;
@@ -3349,7 +3424,7 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/s_user.c ircu2.10.12.13-rc2-fakehost-mute/irc
  
    what = MODE_ADD;
  
-@@ -969,7 +994,8 @@ int set_user_mode(struct Client *cptr, s
+@@ -969,7 +997,8 @@ int set_user_mode(struct Client *cptr, s
      for (i = 0; i < USERMODELIST_SIZE; i++)
      {
        if (HasFlag(sptr, userModeList[i].flag) &&
@@ -3359,7 +3434,7 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/s_user.c ircu2.10.12.13-rc2-fakehost-mute/irc
          *m++ = userModeList[i].c;
      }
      *m = '\0';
-@@ -1074,16 +1100,27 @@ int set_user_mode(struct Client *cptr, s
+@@ -1074,16 +1103,27 @@ int set_user_mode(struct Client *cptr, s
            ClearDebug(sptr);
          break;
        case 'x':
@@ -3396,7 +3471,7 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/s_user.c ircu2.10.12.13-rc2-fakehost-mute/irc
        default:
          send_reply(sptr, ERR_UMODEUNKNOWNFLAG, *m);
          break;
-@@ -1157,7 +1194,7 @@ int set_user_mode(struct Client *cptr, s
+@@ -1157,7 +1197,7 @@ int set_user_mode(struct Client *cptr, s
        ircd_strncpy(cli_user(sptr)->account, account, len);
    }
    if (!FlagHas(&setflags, FLAG_HIDDENHOST) && do_host_hiding && allow_modes != ALLOWMODES_DEFAULT)
@@ -3405,7 +3480,7 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/s_user.c ircu2.10.12.13-rc2-fakehost-mute/irc
  
    if (IsRegistered(sptr)) {
      if (!FlagHas(&setflags, FLAG_OPER) && IsOper(sptr)) {
-@@ -1218,6 +1255,7 @@ char *umode_str(struct Client *cptr)
+@@ -1218,6 +1258,7 @@ char *umode_str(struct Client *cptr)
      *m++ = ' ';
      while ((*m++ = *t++))
        ; /* Empty loop */
@@ -3413,7 +3488,7 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/s_user.c ircu2.10.12.13-rc2-fakehost-mute/irc
  
      if (cli_user(cptr)->acc_create) {
        char nbuf[20];
-@@ -1226,12 +1264,21 @@ char *umode_str(struct Client *cptr)
+@@ -1226,12 +1267,21 @@ char *umode_str(struct Client *cptr)
  	     cli_user(cptr)->acc_create));
        ircd_snprintf(0, t = nbuf, sizeof(nbuf), ":%Tu",
  		    cli_user(cptr)->acc_create);
@@ -3437,7 +3512,7 @@ diff -Nurp ircu2.10.12.13-rc2/ircd/s_user.c ircu2.10.12.13-rc2-fakehost-mute/irc
    *m = '\0';
  
    return umodeBuf;                /* Note: static buffer, gets
-@@ -1266,6 +1313,8 @@ void send_umode(struct Client *cptr, str
+@@ -1266,6 +1316,8 @@ void send_umode(struct Client *cptr, str
      if (FlagHas(old, flag)
          == HasFlag(sptr, flag))
        continue;
